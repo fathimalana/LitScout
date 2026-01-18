@@ -590,26 +590,16 @@ workflow.add_conditional_edges("planner", router, {"execute_tool": "execute_tool
 workflow.add_edge("execute_tool", "planner")
 app = workflow.compile()
 
-# --- 6. DATA FORMATTER ---
-def format_stage_1_planner(state: Any) -> dict:
-    """Format Stage 1 data for React Dashboard - supports both objects and dicts"""
-    
-    # Safely handle dictionary or object state
-    if isinstance(state, dict):
-        questions = state.get("research_questions", [])
-        inc_criteria = state.get("inclusion_criteria", "N/A")
-        exc_criteria = state.get("exclusion_criteria", "N/A")
-    else:
-        questions = getattr(state, "research_questions", [])
-        inc_criteria = getattr(state, "inclusion_criteria", "N/A")
-        exc_criteria = getattr(state, "exclusion_criteria", "N/A")
 
+# --- 6. DATA FORMATTER (CRUCIAL FOR REACT UI) ---
+def format_stage_1_planner(state: dict) -> dict:
+    qs = state.get("research_questions") or []
     return {
         "id": "stage_1",
         "name": "Research Planner",
         "role": "Strategy",
-        "status": "completed" if questions else "pending",
-        "stats": f"{len(questions)} Questions Formulated" if questions else "Pending",
+        "status": "completed" if qs else "loading",
+        "stats": f"{len(qs)} Questions",
         "data": {
             "questions": qs,
             "criteria": {"inclusion": state.get("inclusion_criteria", "N/A"), "exclusion": state.get("exclusion_criteria", "N/A")}
