@@ -1,45 +1,65 @@
 import json
 import sys
 import os
+from typing import List, Dict, Any
+from dotenv import load_dotenv, find_dotenv
+
+env_path = find_dotenv()
+if env_path:
+    load_dotenv(env_path, override=True)
+
+# Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from typing import List, Optional, Dict, Any
-from dotenv import load_dotenv
+
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool, render_text_description
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
-from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_groq import ChatGroq
 from langgraph.graph import StateGraph, END
+
+# --- API KEY VALIDATION ---
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+
+if not GROQ_API_KEY :
+    raise ValueError("ERROR: Neither GROQ_API_KEY nor GOOGLE_API_KEY found in environment")
+
+# Initialize LLM (prefer Groq if available)
+if GROQ_API_KEY:
+    llm = ChatGroq(
+        model="llama-3.3-70b-versatile",
+        api_key=GROQ_API_KEY,
+        temperature=0
+    )
 
 
 # --- MOCK AGENTS FOR DEVELOPMENT ---
 class MockAgent:
     def invoke(self, input_data):
+        print(f"MockAgent invoked with keys: {list(input_data.keys())}")
         return {"status": "mock_response", "data": input_data}
 
-
+# Default to mocks
 screening_agent = MockAgent()
 extraction_agent = MockAgent()
 thematic_agent = MockAgent()
 synthesis_agent = MockAgent()
 qa_agent = MockAgent()
 
-
-# Import real agents
+# Import real agents if available
 try:
     from agents.search_and_filter_agent import saf_agent
-    from agents.screening_agent import screening_agent
 except ImportError as e:
-    print(f"Warning: Could not import real agents: {e}")
+    saf_agent = MockAgent()
 
-
-load_dotenv()
-if not os.getenv("GOOGLE_API_KEY"):
-    raise ValueError("GOOGLE_API_KEY environment variable not set. Please create a .env file.")
-
+try:
+    from agents.screening_agent import screening_agent as real_screening
+    screening_agent = real_screening
+except ImportError as e:
+    print(f"Using mock Screening agent: {e}")
 
 # --- 1. STATE DEFINITION ---
-
 class LitScoutState(BaseModel):
     """Complete state management for LitScout"""
     
@@ -89,11 +109,7 @@ class LitScoutState(BaseModel):
     workflow_complete: bool = False
     error_messages: List[str] = Field(default_factory=list)
 
-
-# --- 2. LLM AND PARSER SETUP ---
-
-llm = ChatGoogleGenerativeAI(model="models/gemini-pro-latest")
-
+# --- 2. PARSER SETUP ---
 class PlannerResponse(BaseModel):
     """The JSON response structure for the planner's decision."""
     plan: List[str] = Field(description="The updated step-by-step plan.")
@@ -101,9 +117,7 @@ class PlannerResponse(BaseModel):
 
 parser = PydanticOutputParser(pydantic_object=PlannerResponse)
 
-
 # --- 3. AGENT TOOL DEFINITIONS ---
-
 class ResearchPlan(BaseModel):
     research_questions: List[str] = Field(description="List of 3-5 specific research questions.")
     inclusion_criteria: str = Field(description="Concise inclusion criteria for the literature review.")
@@ -112,7 +126,7 @@ class ResearchPlan(BaseModel):
 @tool
 def formulate_research_plan(user_prompt: str) -> Dict[str, Any]:
     """
-    Formulates a research plan based on the user_prompt. This is the first step.
+    Formulates a research plan based on the user_prompt.
     Generates research questions and defines inclusion/exclusion criteria using an LLM.
     """
     print("---TOOL: Formulating Research Plan---")
@@ -122,23 +136,15 @@ def formulate_research_plan(user_prompt: str) -> Dict[str, Any]:
         
         prompt_template_string = """Generate a research plan for a literature review.
 
-            Research Prompt: {user_prompt}
-            Generate:
+Research Prompt: {user_prompt}
 
-            1. **research_questions**: 3-5 specific research questions
+Generate:
+1. **research_questions**: 3-5 specific research questions
+2. **inclusion_criteria**: CONTENT-FOCUSED keywords that papers should contain
+3. **exclusion_criteria**: CONTENT to AVOID (methods/topics that are out of scope)
 
-            2. **inclusion_criteria**: CONTENT-FOCUSED keywords that papers should contain.
-            - Focus on: methods, techniques, domains, research areas
-            
-
-            3. **exclusion_criteria**: CONTENT to AVOID (methods/topics that are out of scope).
-            - Focus on: alternative methods, unrelated topics, specific languages to exclude
-            
-            - DO NOT include metadata criteria
-            - Should be DIFFERENT from inclusion criteria (not just negation)
-
-            {format_instructions}
-            """
+{format_instructions}
+"""
         
         prompt = ChatPromptTemplate.from_template(
             prompt_template_string,
@@ -150,13 +156,11 @@ def formulate_research_plan(user_prompt: str) -> Dict[str, Any]:
         
         result = response_obj.model_dump()
         
-        # Clean output formatting
         print(f"\nGenerated {len(result['research_questions'])} research questions:")
         for i, q in enumerate(result['research_questions'], 1):
             print(f"   {i}. {q}")
-        
-        print(f"\nInclusion criteria: {result['inclusion_criteria']}")
-        print(f"Exclusion criteria: {result['exclusion_criteria']}\n")
+        print(f"\nInclusion: {result['inclusion_criteria']}")
+        print(f"Exclusion: {result['exclusion_criteria']}\n")
         
         return result
         
@@ -174,36 +178,27 @@ def search_and_filter_tool(research_questions: List[str], inclusion_criteria: st
                            exclusion_criteria: str, user_prompt: str) -> Dict[str, Any]:
     """
     Search and Filter Agent Tool - Delegates to the specialized SAF agent.
-    Extracts metadata filters (year range, sources) from user prompt.
-    The SAF agent handles searching and metadata filtering.
     """
     print("---TOOL: Search and Filter Agent---")
     
     try:
         import datetime
-        import re
-        
         current_year = datetime.datetime.now().year
         
-        # Extract year range and sources from user prompt using LLM
+        # Extract metadata using LLM
         extraction_prompt = f"""Extract filtering criteria from this research query:
 
-                "{user_prompt}"
+"{user_prompt}"
 
-                Respond with ONLY a JSON object:
-                {{
-                "start_year": <number or null>,
-                "end_year": <number or null>,
-                "sources": [<list of publication venues/conferences or empty array>]
-                }}
+Respond with ONLY a JSON object:
+{{
+  "start_year": <number or null>,
+  "end_year": <number or null>,
+  "sources": [<list of venues or empty array>]
+}}
 
-                Examples:
-                - "papers from 2020 to 2023" → {{"start_year": 2020, "end_year": 2023, "sources": []}}
-                - "recent studies" → {{"start_year": null, "end_year": null, "sources": []}}
-                - "CVPR papers from last 3 years" → {{"start_year": {current_year - 3}, "end_year": {current_year}, "sources": ["CVPR"]}}
-
-                If no specific years mentioned, use null for both start_year and end_year (default to last 5 years).
-                """
+If no specific years mentioned, use null for both (defaults to last 5 years).
+"""
         
         try:
             response = llm.invoke(extraction_prompt)
@@ -215,7 +210,7 @@ def search_and_filter_tool(research_questions: List[str], inclusion_criteria: st
             sources = metadata.get("sources", [])
             
         except Exception as e:
-            print(f"Could not extract metadata, using defaults: {e}")
+            print(f"Could not extract metadata: {e}, using defaults")
             start_year = current_year - 5
             end_year = current_year
             sources = []
@@ -230,15 +225,13 @@ def search_and_filter_tool(research_questions: List[str], inclusion_criteria: st
         }
         
         print(f"Year range: {start_year}-{end_year}")
-        if sources:
-            print(f"Sources: {', '.join(sources)}")
-        else:
-            print(f"Sources: All venues")
-        print(f"Processing {len(research_questions)} research questions")
+        print(f"Sources: {sources if sources else 'All venues'}")
         
         saf_result = saf_agent.invoke(saf_input)
         
-        print(f"SAF agent completed: {len(saf_result.get('filtered_papers', []))} papers found")
+        papers_found = len(saf_result.get('filtered_papers', []))
+        print(f"SAF completed: {papers_found} papers found")
+        
         return saf_result
         
     except Exception as e:
@@ -253,9 +246,7 @@ def search_and_filter_tool(research_questions: List[str], inclusion_criteria: st
 def screening_tool(filtered_papers: List[Dict], research_questions: List[str], 
                    inclusion_criteria: str, exclusion_criteria: str) -> Dict[str, Any]:
     """
-    Screening Agent Tool - Delegates to the specialized screening agent.
-    Performs content-based relevance screening of filtered papers.
-    Metadata filtering is already done by SAF agent.
+    Screening Agent Tool - Content-based relevance screening.
     """
     print("---TOOL: Screening Agent---")
     
@@ -265,19 +256,13 @@ def screening_tool(filtered_papers: List[Dict], research_questions: List[str],
             "research_questions": research_questions,
             "inclusion_criteria": inclusion_criteria,
             "exclusion_criteria": exclusion_criteria,
-            
-            # Adaptive thresholds (will be set by LLM in screening agent)
             "keyword_high_threshold": 0.0,
             "keyword_medium_threshold": 0.0,
             "tfidf_threshold": 0.0,
             "use_llm_screening": False,
-            
-            # No metadata filters - SAF handles this
             "year_range": (1900, 2100),
             "allowed_publication_types": [],
             "min_citation_count": 0,
-            
-            # Internal state
             "metadata_filtered_papers": [],
             "high_relevance_papers": [],
             "medium_relevance_papers": [],
@@ -289,7 +274,9 @@ def screening_tool(filtered_papers: List[Dict], research_questions: List[str],
         print(f"Screening {len(filtered_papers)} papers")
         screening_result = screening_agent.invoke(screening_input)
         
-        print(f"Screening completed: {len(screening_result.get('screened_papers', []))} papers passed")
+        papers_screened = len(screening_result.get('screened_papers', []))
+        print(f"Screening completed: {papers_screened} papers passed")
+        
         return screening_result
         
     except Exception as e:
@@ -302,41 +289,26 @@ def screening_tool(filtered_papers: List[Dict], research_questions: List[str],
 
 @tool
 def extraction_tool(screened_papers: List[Dict], research_questions: List[str]) -> Dict[str, Any]:
-    """
-    Extraction Agent Tool - Delegates to the specialized extraction agent.
-    Extracts structured data from screened papers using CORE API and LLMs.
-    """
+    """Extraction Agent Tool"""
     print("---TOOL: Extraction Agent---")
-    
     try:
         extraction_input = {
             "screened_papers": screened_papers,
             "research_questions": research_questions,
             "extraction_template": "standard_literature_review"
         }
-        
-        print(f"Invoking extraction agent for {len(screened_papers)} papers")
+        print(f"Extracting from {len(screened_papers)} papers")
         extraction_result = extraction_agent.invoke(extraction_input)
-        
-        print(f"Extraction agent completed successfully")
+        print(f"Extraction completed")
         return extraction_result
-        
     except Exception as e:
         print(f"Error in extraction_tool: {e}")
-        return {
-            "extracted_data": {},
-            "extraction_results": {},
-            "error": str(e)
-        }
+        return {"extracted_data": {}, "extraction_results": {}, "error": str(e)}
 
 @tool
 def thematic_analysis_tool(extracted_data: Dict, research_questions: List[str]) -> Dict[str, Any]:
-    """
-    Thematic Analysis Agent Tool - Delegates to the specialized thematic analysis agent.
-    Identifies themes and patterns across the extracted data.
-    """
+    """Thematic Analysis Agent Tool"""
     print("---TOOL: Thematic Analysis Agent---")
-    
     try:
         thematic_input = {
             "extracted_data": extracted_data,
@@ -344,29 +316,19 @@ def thematic_analysis_tool(extracted_data: Dict, research_questions: List[str]) 
             "clustering_method": "hierarchical",
             "min_theme_size": 3
         }
-        
-        print(f"🔍 Invoking thematic analysis agent")
+        print(f"Running thematic analysis")
         thematic_result = thematic_agent.invoke(thematic_input)
-        
-        print(f"Thematic analysis agent completed successfully")
+        print(f"Thematic analysis completed")
         return thematic_result
-        
     except Exception as e:
         print(f"Error in thematic_analysis_tool: {e}")
-        return {
-            "themes": [],
-            "thematic_results": {},
-            "error": str(e)
-        }
+        return {"themes": [], "thematic_results": {}, "error": str(e)}
 
 @tool
-def synthesis_tool(themes: List[Dict], extracted_data: Dict, research_questions: List[str], user_prompt: str) -> Dict[str, Any]:
-    """
-    Synthesis Agent Tool - Delegates to the specialized synthesis agent.
-    Creates coherent literature review narrative from themes and extracted data.
-    """
+def synthesis_tool(themes: List[Dict], extracted_data: Dict, research_questions: List[str], 
+                   user_prompt: str) -> Dict[str, Any]:
+    """Synthesis Agent Tool"""
     print("---TOOL: Synthesis Agent---")
-    
     try:
         synthesis_input = {
             "themes": themes,
@@ -375,29 +337,19 @@ def synthesis_tool(themes: List[Dict], extracted_data: Dict, research_questions:
             "user_prompt": user_prompt,
             "synthesis_style": "academic_literature_review"
         }
-        
-        print(f"Invoking synthesis agent with {len(themes)} themes")
+        print(f"Synthesizing {len(themes)} themes")
         synthesis_result = synthesis_agent.invoke(synthesis_input)
-        
-        print(f"Synthesis agent completed successfully")
+        print(f"Synthesis completed")
         return synthesis_result
-        
     except Exception as e:
         print(f"Error in synthesis_tool: {e}")
-        return {
-            "synthesis_draft": f"Error in synthesis: {e}",
-            "synthesis_results": {},
-            "error": str(e)
-        }
+        return {"synthesis_draft": f"Error: {e}", "synthesis_results": {}, "error": str(e)}
 
 @tool
-def quality_assurance_tool(synthesis_draft: str, extracted_data: Dict, research_questions: List[str]) -> Dict[str, Any]:
-    """
-    Quality Assurance Agent Tool - Delegates to the specialized QA agent.
-    Performs comprehensive quality checks on the synthesized literature review.
-    """
+def quality_assurance_tool(synthesis_draft: str, extracted_data: Dict, 
+                          research_questions: List[str]) -> Dict[str, Any]:
+    """Quality Assurance Agent Tool"""
     print("---TOOL: Quality Assurance Agent---")
-    
     try:
         qa_input = {
             "synthesis_draft": synthesis_draft,
@@ -410,134 +362,99 @@ def quality_assurance_tool(synthesis_draft: str, extracted_data: Dict, research_
                 "completeness_check": True
             }
         }
-        
-        print(f"Invoking quality assurance agent")
+        print(f"Running quality checks")
         qa_result = qa_agent.invoke(qa_input)
-        
-        print(f"Quality assurance agent completed successfully")
+        print(f"QA completed")
         return qa_result
-        
     except Exception as e:
-        print(f"❌ Error in quality_assurance_tool: {e}")
-        return {
-            "quality_report": {"passed": False, "score": 0.0},
-            "quality_passed": False,
-            "error": str(e)
-        }
+        print(f"Error in quality_assurance_tool: {e}")
+        return {"quality_report": {"passed": False, "score": 0.0}, "quality_passed": False, "error": str(e)}
 
 @tool
 def generate_final_report(user_prompt: str, synthesis_draft: str, research_questions: List[str], 
                           quality_report: Dict, themes: List[Dict]) -> Dict[str, Any]:
-    """
-    Generates the final, polished report incorporating all analysis results.
-    This is the orchestrator's final step that combines all agent outputs.
-    """
+    """Generates the final polished report"""
     print("---TOOL: Generating Final Report---")
-    
     try:
-        report_prompt = f"""
-        Create a comprehensive literature review report based on:
-        
-        Original Query: {user_prompt}
-        
-        Research Questions:
-        {chr(10).join(f"   {i+1}. {q}" for i, q in enumerate(research_questions))}
-        
-        Number of Themes Identified: {len(themes)}
-        Quality Score: {quality_report.get('score', 'N/A')}
-        
-        Synthesis Content:
-        {synthesis_draft}
-        
-        Quality Assessment:
-        {quality_report.get('summary', 'No quality assessment available')}
-        
-        Format the report with:
-        1. Executive Summary
-        2. Research Methodology
-        3. Key Themes and Findings
-        4. Quality Assessment
-        5. Conclusions and Future Research Directions
-        6. References and Acknowledgments
-        """
+        report_prompt = f"""Create a comprehensive literature review report based on:
+
+            Original Query: {user_prompt}
+
+            Research Questions:
+            {chr(10).join(f"   {i+1}. {q}" for i, q in enumerate(research_questions))}
+
+            Themes Identified: {len(themes)}
+            Quality Score: {quality_report.get('score', 'N/A')}
+
+            Synthesis:
+            {synthesis_draft}
+
+            Quality Assessment:
+            {quality_report.get('summary', 'No assessment available')}
+
+            Format with:
+            1. Executive Summary
+            2. Research Methodology
+            3. Key Themes and Findings
+            4. Quality Assessment
+            5. Conclusions
+            6. References
+"""
         
         prompt = ChatPromptTemplate.from_template(report_prompt)
         chain = prompt | llm
-        
         response = chain.invoke({})
         report = response.content
         
-        print(f"Generated final report ({len(report)} characters)")
-        
-        return {
-            "final_report": report,
-            "workflow_complete": True
-        }
+        print(f"Final report generated ({len(report)} characters)")
+        return {"final_report": report, "workflow_complete": True}
         
     except Exception as e:
         print(f"Error in generate_final_report: {e}")
-        return {
-            "final_report": f"Error generating final report: {e}",
-            "workflow_complete": True,
-            "error": str(e)
-        }
+        return {"final_report": f"Error: {e}", "workflow_complete": True, "error": str(e)}
 
-
-# Map tools for easy access
+# Map tools
 tools = [
-    formulate_research_plan, 
-    search_and_filter_tool, 
-    screening_tool,
-    extraction_tool,
-    thematic_analysis_tool,
-    synthesis_tool,
-    quality_assurance_tool,
-    generate_final_report
+    formulate_research_plan, search_and_filter_tool, screening_tool,
+    extraction_tool, thematic_analysis_tool, synthesis_tool,
+    quality_assurance_tool, generate_final_report
 ]
 tool_map = {t.name: t for t in tools}
 
-
 # --- 4. PLANNER & EXECUTOR NODES ---
+PLANNER_PROMPT = """You are LitScout Orchestrator.
+Review progress and decide which agent to invoke next.
 
-PLANNER_PROMPT = """You are LitScout Orchestrator, an autonomous AI research assistant coordinator.
-Your goal is to orchestrate a complete literature review using specialized agents.
-Review your current progress and decide which specialized agent to invoke next.
-
-**Current State & Progress**
+**Current State**
 User Query: {user_prompt}
-Current Step: {current_step}
-Research Questions: {research_questions_count} formulated
-Raw Papers Found: {raw_papers_count}
+Step: {current_step}
+Research Questions: {research_questions_count}
+Raw Papers: {raw_papers_count}
 Filtered Papers: {filtered_papers_count}
 Screened Papers: {screened_papers_count}
-Themes Identified: {themes_count}
+Themes: {themes_count}
 Has Synthesis: {has_synthesis}
 Quality Passed: {quality_passed}
-Workflow Complete: {workflow_complete}
+Complete: {workflow_complete}
 
-**Latest Observations**
+**Recent Activity**
 {observations}
 
-**Available Specialized Agents (Tools)**
+**Available Agents**
 {tool_descriptions}
 
-**Instructions**
-Follow the logical workflow sequence:
-  1. formulate_research_plan
-  2. search_and_filter_tool (now handles metadata filtering internally)
-  3. screening_tool (content-based screening only)
-  4. extraction_tool
-  5. thematic_analysis_tool
-  6. synthesis_tool
-  7. quality_assurance_tool
-  8. generate_final_report
+**Workflow**
+1. formulate_research_plan
+2. search_and_filter_tool
+3. screening_tool
+4. extraction_tool
+5. thematic_analysis_tool
+6. synthesis_tool
+7. quality_assurance_tool
+8. generate_final_report
 
-- If quality assurance fails, you may need to go back to synthesis
-- If screening produces too few papers, you may need to go back to search_and_filter
-- Only proceed to the next step if prerequisites are met
-- Set next_agent to "END" when workflow is complete
-- The plan should contain what you have done till now and how much is to complete.
-- Never add any emojies. Dont apply any text formatting like bold,italics.
+Set next_agent to "END" when complete.
+No emojis or text formatting.
 
 {format_instructions}
 """
@@ -546,9 +463,8 @@ prompt_template = ChatPromptTemplate.from_template(PLANNER_PROMPT)
 planner_chain = prompt_template | llm | parser
 
 def planner_node(state: LitScoutState) -> Dict[str, Any]:
-    """The central planner node that coordinates all specialized agents."""
-    print("\n---ORCHESTRATOR: Planning next action---")
-    
+    """Central planner node"""
+    print("\n---ORCHESTRATOR: Planning---")
     try:
         response = planner_chain.invoke({
             "user_prompt": state.user_prompt,
@@ -561,47 +477,34 @@ def planner_node(state: LitScoutState) -> Dict[str, Any]:
             "has_synthesis": bool(state.synthesis_draft),
             "quality_passed": state.quality_passed,
             "workflow_complete": state.workflow_complete,
-            "observations": "\n   ".join(state.observations[-3:]) if state.observations else "No observations yet.",
+            "observations": "\n   ".join(state.observations[-3:]) if state.observations else "Starting workflow",
             "tool_descriptions": render_text_description(tools),
             "format_instructions": parser.get_format_instructions()
         })
-        print("Plan:")
-        for step in response.plan:
-            print(step)
-        print(f"   Next action: {response.next_agent}")
         
-        return {
-            "plan": response.plan,
-            "next_agent": response.next_agent
-        }
+        print(f"Plan: {' -> '.join(response.plan[:3])}{'...' if len(response.plan) > 3 else ''}")
+        print(f"Next: {response.next_agent}")
         
+        return {"plan": response.plan, "next_agent": response.next_agent}
     except Exception as e:
         print(f"Planner error: {e}")
-        return {
-            "plan": state.plan,
-            "next_agent": "END",
-            "error_messages": state.error_messages + [f"Planner error: {e}"]
-        }
+        return {"plan": state.plan, "next_agent": "END", "error_messages": state.error_messages + [f"Planner error: {e}"]}
 
 def tool_executor_node(state: LitScoutState) -> Dict[str, Any]:
-    """Executes the specialized agent selected by the planner."""
+    """Executes the selected agent"""
     tool_name = state.next_agent
     
     if tool_name not in tool_map:
-        error_msg = f"Unknown agent/tool: {tool_name}"
-        print(f"{error_msg}")
-        return {
-            "error_messages": state.error_messages + [error_msg],
-            "next_agent": "END"
-        }
+        print(f"Unknown tool: {tool_name}")
+        return {"error_messages": state.error_messages + [f"Unknown tool: {tool_name}"], "next_agent": "END"}
     
     selected_tool = tool_map[tool_name]
-    print(f"---ORCHESTRATOR EXECUTOR: Invoking '{tool_name}'---")
+    print(f"\nExecuting: {tool_name}")
     
     try:
+        # Build tool inputs based on tool name
         if tool_name == "formulate_research_plan":
             result = selected_tool.invoke({"user_prompt": state.user_prompt})
-            
         elif tool_name == "search_and_filter_tool":
             result = selected_tool.invoke({
                 "research_questions": state.research_questions,
@@ -609,7 +512,6 @@ def tool_executor_node(state: LitScoutState) -> Dict[str, Any]:
                 "exclusion_criteria": state.exclusion_criteria,
                 "user_prompt": state.user_prompt
             })
-            
         elif tool_name == "screening_tool":
             result = selected_tool.invoke({
                 "filtered_papers": state.filtered_papers,
@@ -617,19 +519,16 @@ def tool_executor_node(state: LitScoutState) -> Dict[str, Any]:
                 "inclusion_criteria": state.inclusion_criteria,
                 "exclusion_criteria": state.exclusion_criteria
             })
-            
         elif tool_name == "extraction_tool":
             result = selected_tool.invoke({
                 "screened_papers": state.screened_papers,
                 "research_questions": state.research_questions
             })
-            
         elif tool_name == "thematic_analysis_tool":
             result = selected_tool.invoke({
                 "extracted_data": state.extracted_data,
                 "research_questions": state.research_questions
             })
-            
         elif tool_name == "synthesis_tool":
             result = selected_tool.invoke({
                 "themes": state.themes,
@@ -637,14 +536,12 @@ def tool_executor_node(state: LitScoutState) -> Dict[str, Any]:
                 "research_questions": state.research_questions,
                 "user_prompt": state.user_prompt
             })
-            
         elif tool_name == "quality_assurance_tool":
             result = selected_tool.invoke({
                 "synthesis_draft": state.synthesis_draft,
                 "extracted_data": state.extracted_data,
                 "research_questions": state.research_questions
             })
-            
         elif tool_name == "generate_final_report":
             result = selected_tool.invoke({
                 "user_prompt": state.user_prompt,
@@ -654,78 +551,66 @@ def tool_executor_node(state: LitScoutState) -> Dict[str, Any]:
                 "themes": state.themes
             })
         else:
-            result = {"error": f"No execution logic for agent: {tool_name}"}
+            result = {"error": f"No execution logic for: {tool_name}"}
         
-        observation = f"Successfully invoked agent '{tool_name}'"
+        observation = f"Executed {tool_name}"
         if "error" in result:
-            observation += f" with errors: {result['error']}"
+            observation += f" (with errors)"
         
         state_update = result.copy()
         state_update["observations"] = state.observations + [observation]
         state_update["current_step"] = state.current_step + 1
         
-        print(f"{observation}")
         return state_update
         
     except Exception as e:
-        error_msg = f"Error invoking agent '{tool_name}': {e}"
-        print(f"{error_msg}")
+        error_msg = f"Error in {tool_name}: {e}"
+        print(f"Error: {error_msg}")
         return {
             "observations": state.observations + [error_msg],
             "error_messages": state.error_messages + [error_msg],
             "current_step": state.current_step + 1
         }
 
-
 # --- 5. GRAPH ASSEMBLY ---
-
 def router(state: LitScoutState) -> str:
-    """The router that decides the next step in the orchestration."""
+    """Router for workflow"""
     if state.next_agent == "END" or state.workflow_complete:
-        print("---ORCHESTRATOR ROUTER: Workflow complete. Ending process.---")
         return "END"
     elif state.next_agent in tool_map:
         return "execute_tool"
     else:
-        print(f"---ORCHESTRATOR ROUTER: Unknown agent '{state.next_agent}', ending process.---")
+        print(f"Unknown agent, ending")
         return "END"
 
-# Create the orchestrator workflow
 workflow = StateGraph(LitScoutState)
 workflow.add_node("planner", planner_node)
 workflow.add_node("execute_tool", tool_executor_node)
-
 workflow.set_entry_point("planner")
-workflow.add_conditional_edges(
-    "planner", 
-    router, 
-    {
-        "execute_tool": "execute_tool", 
-        "END": END
-    }
-)
+workflow.add_conditional_edges("planner", router, {"execute_tool": "execute_tool", "END": END})
 workflow.add_edge("execute_tool", "planner")
-
 app = workflow.compile()
 
-
-# --- 6. DATA FORMATTER (CRUCIAL FOR REACT UI) ---
-
-def format_stage_1_planner(state: dict) -> dict:
-    """
-    Extracts REAL questions and criteria generated by the LLM from the state 
-    and formats them into the exact JSON structure the React Dashboard expects.
-    """
-    questions = state.get("research_questions", [])
-    inc_criteria = state.get("inclusion_criteria", "N/A")
-    exc_criteria = state.get("exclusion_criteria", "N/A")
+# --- 6. DATA FORMATTER ---
+def format_stage_1_planner(state: Any) -> dict:
+    """Format Stage 1 data for React Dashboard - supports both objects and dicts"""
+    
+    # Safely handle dictionary or object state
+    if isinstance(state, dict):
+        questions = state.get("research_questions", [])
+        inc_criteria = state.get("inclusion_criteria", "N/A")
+        exc_criteria = state.get("exclusion_criteria", "N/A")
+    else:
+        questions = getattr(state, "research_questions", [])
+        inc_criteria = getattr(state, "inclusion_criteria", "N/A")
+        exc_criteria = getattr(state, "exclusion_criteria", "N/A")
 
     return {
         "id": "stage_1",
         "name": "Research Planner",
-        "role": "Strategy",  # Matches the IF condition in Dashboard.js
-        "status": "completed",
-        "stats": f"{len(questions)} Questions Formulated",
+        "role": "Strategy",
+        "status": "completed" if questions else "pending",
+        "stats": f"{len(questions)} Questions Formulated" if questions else "Pending",
         "data": {
             "questions": questions,
             "criteria": {
@@ -734,63 +619,77 @@ def format_stage_1_planner(state: dict) -> dict:
             }
         }
     }
-
-
-# --- 7. EXPORTED EXECUTION FUNCTION ---
-
+# --- 7. MAIN EXECUTION FUNCTION ---
 async def run_orchestrator(user_prompt: str):
-    """
-    Function to be called by the FastAPI backend.
-    """
-    initial_state = LitScoutState(
-        user_prompt=user_prompt
-    )
+    """Function to be called by FastAPI backend"""
+    initial_state = LitScoutState(user_prompt=user_prompt)
     
-    print(f"--- STARTING ORCHESTRATION FOR: {user_prompt} ---")
+    print(f"\n{'='*60}")
+    print(f"STARTING LITSCOUT ORCHESTRATION")
+    print(f"Query: {user_prompt}")
+    print(f"{'='*60}\n")
     
     try:
-        final_state = None
+        final_state = {}
         
-        # Run the Graph
-        # We iterate to ensure the graph executes fully and we capture the final state
-        async for step in app.astream(initial_state, {"recursion_limit": 25}):
-            node, output = next(iter(step.items()))
-            print(f"Executed: {node}")
-            final_state = output
+        # Stream through the graph execution
+        final_state = await app.ainvoke(initial_state, {"recursion_limit": 25})
             
         if final_state:
-            # --- 1. FORMAT STAGE 1 WITH REAL DATA ---
-            # This gets the actual questions/criteria from the LLM
+            # Format Stage 1 with real data
             stage_1_real = format_stage_1_planner(final_state)
             
-            # --- 2. ADD PLACEHOLDERS FOR OTHER STAGES ---
-            # We add these empty/pending stages so the React Dashboard 
-            # renders the full 8-button workflow bar correctly.
+            # Placeholder stages
             placeholders = [
-                {"id": "stage_2", "name": "Deep Crawler", "role": "Search & Filter", "status": "pending", "stats": "Waiting...", "data": {"summary": {"total": 0, "selected": 0, "rejected": 0}, "papers": []}},
-                {"id": "stage_3", "name": "Semantic Screen", "role": "Screening", "status": "pending", "stats": "Waiting...", "data": {"papers": []}},
-                {"id": "stage_4", "name": "Data Extractor", "role": "Extraction", "status": "pending", "stats": "Waiting...", "data": {}},
-                {"id": "stage_5", "name": "Theme Mapper", "role": "Thematic Analysis", "status": "pending", "stats": "Waiting...", "data": {"themes": []}},
-                {"id": "stage_6", "name": "Synthesizer", "role": "Drafting", "status": "pending", "stats": "Waiting...", "data": {}},
-                {"id": "stage_7", "name": "QA Bot", "role": "Quality Assurance", "status": "pending", "stats": "Waiting...", "data": {"checklist": []}},
-                {"id": "stage_8", "name": "Publisher", "role": "Final Report", "status": "pending", "stats": "Waiting...", "data": {}}
+                {"id": "stage_2", "name": "Deep Crawler", "role": "Search & Filter", "status": "pending", "stats": "Waiting", "data": {}},
+                {"id": "stage_3", "name": "Semantic Screen", "role": "Screening", "status": "pending", "stats": "Waiting", "data": {}},
+                {"id": "stage_4", "name": "Data Extractor", "role": "Extraction", "status": "pending", "stats": "Waiting", "data": {}},
+                {"id": "stage_5", "name": "Theme Mapper", "role": "Thematic Analysis", "status": "pending", "stats": "Waiting", "data": {}},
+                {"id": "stage_6", "name": "Synthesizer", "role": "Drafting", "status": "pending", "stats": "Waiting", "data": {}},
+                {"id": "stage_7", "name": "QA Bot", "role": "Quality Assurance", "status": "pending", "stats": "Waiting", "data": {}},
+                {"id": "stage_8", "name": "Publisher", "role": "Final Report", "status": "pending", "stats": "Waiting", "data": {}}
             ]
             
-            # Combine Stage 1 (Real) + Stages 2-8 (Placeholders)
             workflow_steps = [stage_1_real] + placeholders
-
+            
             return {
-                "status": "success", 
-                "report": final_state.get("final_report", "No report generated."),
-                "steps": workflow_steps # <--- Sends the list to React
+                "status": "success",
+                "report": final_state.get("final_report", "No report generated"),
+                "steps": workflow_steps
             }
         else:
             return {
-                "status": "error", 
-                "report": "Workflow finished but no final report was generated.",
-                "details": "Unknown error"
+                "status": "error",
+                "report": "Workflow finished but no state captured",
+                "steps": []
             }
-
+    
     except Exception as e:
-        print(f"Orchestration Error: {e}")
-        return {"status": "error", "report": str(e)}
+        print(f"\nORCHESTRATION ERROR: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            "status": "error",
+            "report": f"Orchestration failed: {str(e)}",
+            "steps": []
+        }
+
+# --- 8. TEST EXECUTION ---
+if __name__ == "__main__":
+    import asyncio
+    
+    test_prompt = "AI applications in climate change research"
+    print(f"\nTesting orchestrator with: '{test_prompt}'\n")
+    
+    result = asyncio.run(run_orchestrator(test_prompt))
+    
+    print(f"\n{'='*60}")
+    print(f"FINAL RESULT")
+    print(f"{'='*60}")
+    print(f"Status: {result['status']}")
+    print(f"Steps: {len(result.get('steps', []))}")
+    if result['status'] == 'success':
+        print(f"\nReport Preview:")
+        print(result['report'][:500] + "..." if len(result['report']) > 500 else result['report'])
+    else:
+        print(f"Error: {result.get('report', 'Unknown error')}")

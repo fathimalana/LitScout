@@ -7,18 +7,22 @@ import requests
 from dotenv import load_dotenv
 from typing import List, Dict, TypedDict, Optional
 from langgraph.graph import StateGraph, END
-from langchain_google_genai import ChatGoogleGenerativeAI
 
 # --- 1. CONFIGURATION ---
 load_dotenv()
 SEMANTIC_SCHOLAR_API_KEY = os.getenv("SEMANTIC_SCHOLAR_API_KEY")
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GROQ_API_KEY=os.getenv("GROQ_API_KEY")
 
-if not SEMANTIC_SCHOLAR_API_KEY or not GOOGLE_API_KEY:
+if not SEMANTIC_SCHOLAR_API_KEY :
     raise ValueError("One or more required API keys are not set in the .env file.")
 
-llm = ChatGoogleGenerativeAI(model="models/gemini-pro-latest", google_api_key=GOOGLE_API_KEY)
+from langchain_groq import ChatGroq
 
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile",
+    api_key=GROQ_API_KEY,    
+    temperature=0
+)
 
 # --- 2. QUERY GENERATION LOGIC ---
 def generate_simple_query(research_question: str) -> str:
@@ -61,7 +65,7 @@ def paper_search(state: dict) -> dict:
         while True:
             params = {
                 'query': simple_query,
-                'fields': 'title,abstract,authors,year,venue',
+                'fields': 'title,abstract,authors,year,url,venue',
                 'limit': limit_per_request,
                 'offset': current_offset
             }

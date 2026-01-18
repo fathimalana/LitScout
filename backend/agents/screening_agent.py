@@ -13,13 +13,15 @@ import numpy as np
 
 # --- 1. CONFIGURATION ---
 load_dotenv()
-GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+GROQ_API_KEY=os.getenv("GROQ_API_KEY")
 
-if not GOOGLE_API_KEY:
-    raise ValueError("GOOGLE_API_KEY is not set in the .env file.")
+from langchain_groq import ChatGroq
 
-llm = ChatGoogleGenerativeAI(model="models/gemini-2.0-flash-exp", google_api_key=GOOGLE_API_KEY, temperature=0)
-
+llm = ChatGroq(
+    model="llama-3.3-70b-versatile", 
+    api_key=GROQ_API_KEY,    
+    temperature=0
+)
 
 # --- 2. STATE DEFINITION ---
 class ScreeningState(TypedDict):
