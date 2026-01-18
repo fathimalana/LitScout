@@ -1,3 +1,5 @@
+
+
 import sys
 import os
 
@@ -9,7 +11,8 @@ from sqlalchemy.orm import Session
 from app import database, models, schemas, auth
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
+from fastapi.responses import StreamingResponse # Ensure this is at the top
+import json
 # Import the orchestrator
 from backend.orch import run_orchestrator
 
@@ -84,29 +87,18 @@ def get_about():
 class ResearchRequest(BaseModel):
     query: str
 
+
+    
 @app.post("/start-research")
 async def start_research(request: ResearchRequest):
-    """
-    Triggers the LangGraph orchestrator.
-    """
     if not request.query:
         raise HTTPException(status_code=400, detail="Query cannot be empty")
     
-    print(f"Starting research for: {request.query}")
-    
-    # 1. Run the Python Logic
-    result = await run_orchestrator(request.query)
-    
-    # 2. Check for Errors
-    if result["status"] == "error":
-        raise HTTPException(status_code=500, detail=result["report"])
-        
-    # 3. RETURN CORRECT DATA STRUCTURE
-    # React expects { report: "...", workflow: [...] }
-    # But result contains { report: "...", steps: [...] }
-    # We must map 'steps' to 'workflow' here:
-    
-    return {
-        "report": result["report"],
-        "workflow": result["steps"]  # <--- THIS IS THE CRITICAL FIX
-    }
+    async def stream_generator():
+        # We call the NEW generator function we just made in orch.py
+        from backend.orch import run_orchestrator
+        async for update in run_orchestrator(request.query):
+            # This formatting is required for the browser to see it as a stream
+            yield f"data: {json.dumps(update)}\n\n"
+
+    return StreamingResponse(stream_generator(), media_type="text/event-stream")
