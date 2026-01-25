@@ -537,7 +537,7 @@ def tool_executor_node(state: LitScoutState) -> Dict[str, Any]:
                 "user_prompt": state.user_prompt
             })
         elif tool_name == "quality_assurance_tool":
-            result = selected_tool.invoke({
+             result = selected_tool.invoke({
                 "synthesis_draft": state.synthesis_draft,
                 "extracted_data": state.extracted_data,
                 "research_questions": state.research_questions
@@ -571,7 +571,6 @@ def tool_executor_node(state: LitScoutState) -> Dict[str, Any]:
             "error_messages": state.error_messages + [error_msg],
             "current_step": state.current_step + 1
         }
-
 # --- 5. GRAPH ASSEMBLY ---
 def router(state: LitScoutState) -> str:
     """Router for workflow"""
@@ -591,105 +590,123 @@ workflow.add_conditional_edges("planner", router, {"execute_tool": "execute_tool
 workflow.add_edge("execute_tool", "planner")
 app = workflow.compile()
 
-# --- 6. DATA FORMATTER ---
-def format_stage_1_planner(state: Any) -> dict:
-    """Format Stage 1 data for React Dashboard - supports both objects and dicts"""
-    
-    # Safely handle dictionary or object state
-    if isinstance(state, dict):
-        questions = state.get("research_questions", [])
-        inc_criteria = state.get("inclusion_criteria", "N/A")
-        exc_criteria = state.get("exclusion_criteria", "N/A")
-    else:
-        questions = getattr(state, "research_questions", [])
-        inc_criteria = getattr(state, "inclusion_criteria", "N/A")
-        exc_criteria = getattr(state, "exclusion_criteria", "N/A")
 
+# --- 6. DATA FORMATTER (CRUCIAL FOR REACT UI) ---
+def format_stage_1_planner(state: dict) -> dict:
+    qs = state.get("research_questions") or []
     return {
         "id": "stage_1",
         "name": "Research Planner",
         "role": "Strategy",
-        "status": "completed" if questions else "pending",
-        "stats": f"{len(questions)} Questions Formulated" if questions else "Pending",
+        "status": "completed" if qs else "loading",
+        "stats": f"{len(qs)} Questions",
         "data": {
-            "questions": questions,
-            "criteria": {
-                "inclusion": inc_criteria,
-                "exclusion": exc_criteria
-            }
+            "questions": qs,
+            "criteria": {"inclusion": state.get("inclusion_criteria", "N/A"), "exclusion": state.get("exclusion_criteria", "N/A")}
         }
     }
-# --- 7. MAIN EXECUTION FUNCTION ---
-async def run_orchestrator(user_prompt: str):
-    """Function to be called by FastAPI backend"""
-    initial_state = LitScoutState(user_prompt=user_prompt)
+
+def format_stage_2_search(state: dict) -> dict:
+    raw = state.get("raw_papers", [])
+    filtered = state.get("filtered_papers", [])
+    status = "completed" if filtered else "loading" if raw else "pending"
+    return {
+        "id": "stage_2",
+        "name": "Deep Crawler",
+        "role": "Search & Filter",
+        "status": status,
+        "stats": f"Found {len(raw)} | Kept {len(filtered)}",
+        "data": {
+            "summary": {"total": len(raw), "selected": len(filtered), "rejected": len(raw) - len(filtered)},
+            "papers": filtered[:10] 
+        }
+    }
+def format_stage_3_screening(state: dict):
+    input_papers = state.get("filtered_papers", [])
+    output_papers = state.get("screened_papers", [])
     
-    print(f"\n{'='*60}")
-    print(f"STARTING LITSCOUT ORCHESTRATION")
-    print(f"Query: {user_prompt}")
-    print(f"{'='*60}\n")
+    input_count = len(input_papers)
+    output_count = len(output_papers)
+    exclusion_rate = ((input_count - output_count) / input_count * 100) if input_count > 0 else 0
+
+    stats_string = f"In: {input_count} | Out: {output_count} | Excl: {exclusion_rate:.1f}%"
+
+    return {
+        "id": "stage_3",
+        "name": "Semantic Screen",
+        "role": "Screening",
+        "status": "completed" if output_count > 0 else "loading",
+        "stats": stats_string, 
+        "data": {
+            # --- THIS IS WHAT SHOWS UP IN THE LOWER PANEL ---
+            "summary": {
+                "total": input_count,
+                "passed": output_count,
+                "exclusion": f"{exclusion_rate:.1f}%",
+                "method": "LLM-based Semantic Filtering"
+            },
+            "papers": output_papers[:15] 
+        }
+    }
+async def run_orchestrator(user_prompt: str):
+    # Initialize fresh state
+    initial_state = LitScoutState(user_prompt=user_prompt)
+    yield {"type": "log", "message": f"🚀 Initializing orchestrator..."}
+    
+    accumulated_state = {}
     
     try:
-        final_state = {}
-        
-        # Stream through the graph execution
-        final_state = await app.ainvoke(initial_state, {"recursion_limit": 25})
+        # Increased recursion limit for deep research tasks
+        async for step in app.astream(initial_state, {"recursion_limit": 50}):
+            for node, output in step.items():
+               # yield {"type": "log", "message": f"✅ Agent '{node}' finished step."} 
+                
+                if isinstance(output, dict):
+                    accumulated_state.update(output)
+                
+                # --- LIVE UI UPDATE LOGIC ---
+                current_steps = []
+                
+                # Stage 1: Planner
+                if accumulated_state.get("research_questions"):
+                    current_steps.append(format_stage_1_planner(accumulated_state))
+                
+                # Stage 2: Search
+                if accumulated_state.get("raw_papers") or accumulated_state.get("filtered_papers"):
+                    current_steps.append(format_stage_2_search(accumulated_state))
+                
+                # Stage 3: SCREENING (The new addition)
+                if accumulated_state.get("screened_papers"):
+                    current_steps.append(format_stage_3_screening(accumulated_state))
+
+                if current_steps:
+                    yield {
+                        "type": "final",
+                        "report": "Analyzing paper relevance and screening content...",
+                        "steps": current_steps
+                    }
             
-        if final_state:
-            # Format Stage 1 with real data
-            stage_1_real = format_stage_1_planner(final_state)
-            
-            # Placeholder stages
-            placeholders = [
-                {"id": "stage_2", "name": "Deep Crawler", "role": "Search & Filter", "status": "pending", "stats": "Waiting", "data": {}},
-                {"id": "stage_3", "name": "Semantic Screen", "role": "Screening", "status": "pending", "stats": "Waiting", "data": {}},
-                {"id": "stage_4", "name": "Data Extractor", "role": "Extraction", "status": "pending", "stats": "Waiting", "data": {}},
-                {"id": "stage_5", "name": "Theme Mapper", "role": "Thematic Analysis", "status": "pending", "stats": "Waiting", "data": {}},
-                {"id": "stage_6", "name": "Synthesizer", "role": "Drafting", "status": "pending", "stats": "Waiting", "data": {}},
-                {"id": "stage_7", "name": "QA Bot", "role": "Quality Assurance", "status": "pending", "stats": "Waiting", "data": {}},
-                {"id": "stage_8", "name": "Publisher", "role": "Final Report", "status": "pending", "stats": "Waiting", "data": {}}
-            ]
-            
-            workflow_steps = [stage_1_real] + placeholders
-            
-            return {
-                "status": "success",
-                "report": final_state.get("final_report", "No report generated"),
-                "steps": workflow_steps
-            }
-        else:
-            return {
-                "status": "error",
-                "report": "Workflow finished but no state captured",
-                "steps": []
+        # Final Package after graph finishes
+        if accumulated_state:
+            yield {
+                "type": "final",
+                "report": accumulated_state.get("final_report", "Research complete."),
+                "steps": [
+                    format_stage_1_planner(accumulated_state),
+                    format_stage_2_search(accumulated_state),
+                    format_stage_3_screening(accumulated_state) # Final update
+                ]
             }
     
     except Exception as e:
-        print(f"\nORCHESTRATION ERROR: {e}")
-        import traceback
-        traceback.print_exc()
-        return {
-            "status": "error",
-            "report": f"Orchestration failed: {str(e)}",
-            "steps": []
-        }
-
-# --- 8. TEST EXECUTION ---
-if __name__ == "__main__":
-    import asyncio
-    
-    test_prompt = "AI applications in climate change research"
-    print(f"\nTesting orchestrator with: '{test_prompt}'\n")
-    
-    result = asyncio.run(run_orchestrator(test_prompt))
-    
-    print(f"\n{'='*60}")
-    print(f"FINAL RESULT")
-    print(f"{'='*60}")
-    print(f"Status: {result['status']}")
-    print(f"Steps: {len(result.get('steps', []))}")
-    if result['status'] == 'success':
-        print(f"\nReport Preview:")
-        print(result['report'][:500] + "..." if len(result['report']) > 500 else result['report'])
-    else:
-        print(f"Error: {result.get('report', 'Unknown error')}")
+        yield {"type": "log", "message": f"⚠️ Notice: {str(e)}"}
+        if accumulated_state:
+            yield {
+                "type": "final",
+                "report": "Process paused. Results gathered so far are displayed.",
+                "steps": [
+                    format_stage_1_planner(accumulated_state), 
+                    format_stage_2_search(accumulated_state),
+                    format_stage_3_screening(accumulated_state)
+                ]
+            }
