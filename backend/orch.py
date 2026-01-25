@@ -621,30 +621,31 @@ def format_stage_2_search(state: dict) -> dict:
             "papers": filtered[:10] 
         }
     }
-def format_stage_3_screening(state: dict) -> dict:
-    screened = state.get("screened_papers", [])
-    results = state.get("screening_results", {})
+def format_stage_3_screening(state: dict):
+    input_papers = state.get("filtered_papers", [])
+    output_papers = state.get("screened_papers", [])
     
-    # Calculate stats for the UI
-    total_screened = len(screened)
-    high_relevance = len([p for p in screened if p.get("relevance_score", 0) > 0.7])
-    
-    status = "completed" if screened else "loading"
-    
+    input_count = len(input_papers)
+    output_count = len(output_papers)
+    exclusion_rate = ((input_count - output_count) / input_count * 100) if input_count > 0 else 0
+
+    stats_string = f"In: {input_count} | Out: {output_count} | Excl: {exclusion_rate:.1f}%"
+
     return {
         "id": "stage_3",
-        "name": "Screening Agent",
-        "role": "Content Review",
-        "status": status,
-        "stats": f"{total_screened} Papers Screened",
+        "name": "Semantic Screen",
+        "role": "Screening",
+        "status": "completed" if output_count > 0 else "loading",
+        "stats": stats_string, 
         "data": {
+            # --- THIS IS WHAT SHOWS UP IN THE LOWER PANEL ---
             "summary": {
-                "passed": total_screened,
-                "high_relevance": high_relevance,
-                "logic": "NLP Semantic Filtering"
+                "total": input_count,
+                "passed": output_count,
+                "exclusion": f"{exclusion_rate:.1f}%",
+                "method": "LLM-based Semantic Filtering"
             },
-            # Return a slice for the UI to prevent heavy payloads
-            "papers": screened[:15] 
+            "papers": output_papers[:15] 
         }
     }
 async def run_orchestrator(user_prompt: str):
@@ -658,7 +659,7 @@ async def run_orchestrator(user_prompt: str):
         # Increased recursion limit for deep research tasks
         async for step in app.astream(initial_state, {"recursion_limit": 50}):
             for node, output in step.items():
-                yield {"type": "log", "message": f"✅ Agent '{node}' finished step."}
+               # yield {"type": "log", "message": f"✅ Agent '{node}' finished step."} 
                 
                 if isinstance(output, dict):
                     accumulated_state.update(output)

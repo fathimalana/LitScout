@@ -109,7 +109,38 @@ const StageDetailPanel = ({ stage, onClose }) => {
                   </div>
               </div>
           )}
-          {!['Strategy', 'Search & Filter'].includes(stage.role) && stage.status !== 'idle' && (
+          {stage.role === "Screening" && stage.status !== 'idle' && (
+              <div className="space-y-4">
+                  <div className="flex justify-between bg-gray-900 p-3 rounded-lg border border-gray-600">
+                      <div className="text-center">
+                          <div className="text-gray-400 text-xs uppercase tracking-tight">Total Input</div>
+                          <div className="text-blue-400 text-xl font-bold">{stage.data.summary?.total || 0}</div>
+                      </div>
+                      <div className="text-center border-x border-gray-600 px-4">
+                          <div className="text-gray-400 text-xs uppercase tracking-tight">Passed</div>
+                          <div className="text-green-400 text-xl font-bold">{stage.data.summary?.passed || 0}</div>
+                      </div>
+                      <div className="text-center">
+                          <div className="text-gray-400 text-xs uppercase tracking-tight">Exclusion</div>
+                          <div className="text-red-400 text-xl font-bold">{stage.data.summary?.exclusion || '0%'}</div>
+                      </div>
+                  </div>
+                  
+                  <div className="mt-4">
+                      <div className="text-[10px] text-gray-500 uppercase font-bold mb-2 px-1">Screening Results Preview</div>
+                      <div className="max-h-40 overflow-y-auto space-y-2 pr-2 custom-scrollbar">
+                          {stage.data.papers?.map((paper, i) => (
+                              <div key={i} className="text-[11px] bg-gray-900/50 p-2 rounded border border-gray-700 text-gray-300">
+                                  {paper.title}
+                              </div>
+                          ))}
+                      </div>
+                  </div>
+              </div>
+          )}
+
+          {/* This part handles all other stages that don't have a special view yet */}
+          {!['Strategy', 'Search & Filter', 'Screening'].includes(stage.role) && stage.status !== 'idle' && (
               <div className="text-gray-500 italic">Data view for {stage.name} is coming soon.</div>
           )}
       </div>
