@@ -240,24 +240,31 @@ function Dashboard() {
               if (data.type === "log") {
                 setTerminalLogs(prev => [...prev, data.message]);
               } else if (data.type === "final") {
-                setFullReport(data.report);
-                setWorkflow(data.steps);
-                setSelectedStage(data.steps[0]);
-                
-                // Save to history
-                const newEntry = {
-                    id: Date.now(),
-                    query: inputValue,
-                    report: data.report,
-                    workflow: data.steps,
-                    created_at: new Date().toISOString()
-                };
-                setHistory(prev => {
-                    const updated = [newEntry, ...prev];
-                    localStorage.setItem('litscout_history', JSON.stringify(updated));
-                    return updated;
-                });
+              setFullReport(data.report);
+              setWorkflow(data.steps);
+              // Always focus the most recent active stage (better UX than steps[0])
+              setSelectedStage(data.steps[data.steps.length - 1]); 
+
+              // Only save to history if it's the actual finished report, not a partial update
+              const isActuallyFinished = !data.report.includes("Processing") && data.report.length > 50;
+
+              if (isActuallyFinished) {
+                  setHistory(prev => {
+                      const newEntry = {
+                          id: Date.now(),
+                          query: inputValue,
+                          report: data.report,
+                          workflow: data.steps,
+                          created_at: new Date().toISOString()
+                      };
+                      // This filter removes any partial/duplicate entries for the same query
+                      const filtered = prev.filter(item => item.query !== inputValue);
+                      const updated = [newEntry, ...filtered];
+                      localStorage.setItem('litscout_history', JSON.stringify(updated));
+                      return updated;
+                  });
               }
+          }
             } catch (e) {
               console.error("Chunk parse error", e);
             }
