@@ -4,7 +4,6 @@ import json
 from dotenv import load_dotenv
 from typing import List, Dict, TypedDict
 from langgraph.graph import StateGraph, END
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.output_parsers import PydanticOutputParser
 from pydantic import BaseModel, Field
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -30,6 +29,7 @@ class ScreeningState(TypedDict):
     research_questions: List[str]
     inclusion_criteria: str
     exclusion_criteria: str
+    max_papers: int  # Maximum number of papers to return (0 = no limit)
     
     # ADAPTIVE: LLM determines these
     keyword_high_threshold: float
@@ -114,22 +114,88 @@ def extract_keywords(text: str) -> set:
     return {w for w in text.split() if len(w) > 3}
 
 
+# Cache for synonym groups (to avoid regenerating for each paper)
+_synonym_cache = {}
+
+def generate_synonyms_for_topic(research_questions: List[str], inclusion_criteria: str) -> Dict[str, List[str]]:
+    """
+    Dynamically generate synonyms for key concepts in the research topic using LLM.
+    This makes the system work for ANY topic without hardcoded synonyms.
+    """
+    cache_key = " ".join(research_questions) + inclusion_criteria
+    
+    if cache_key in _synonym_cache:
+        return _synonym_cache[cache_key]
+    
+    prompt = f"""Extract 3-5 key concepts from this research topic and provide synonyms/related terms for each.
+
+Research Questions:
+{chr(10).join(f"- {q}" for q in research_questions)}
+
+Inclusion Criteria: {inclusion_criteria}
+
+For each key concept, provide 3-5 synonyms or closely related terms that papers might use.
+
+Respond with JSON only:
+{{
+  "concept1": ["synonym1", "synonym2", "synonym3"],
+  "concept2": ["synonym1", "synonym2"],
+  ...
+}}
+
+Example for "Deep learning for climate prediction":
+{{
+  "deep learning": ["neural network", "machine learning", "artificial intelligence", "deep neural network"],
+  "climate": ["weather", "atmospheric", "meteorological", "climate science"],
+  "prediction": ["forecasting", "projection", "modeling", "estimation"]
+}}
+"""
+    
+    try:
+        response = llm.invoke(prompt)
+        content = response.content.strip().replace("```json", "").replace("```", "").strip()
+        synonym_groups = json.loads(content)
+        _synonym_cache[cache_key] = synonym_groups
+        return synonym_groups
+    except Exception as e:
+        print(f"Warning: Could not generate synonyms: {e}")
+        return {}
+
+
 def calculate_keyword_score(paper: Dict, research_questions: List[str], inclusion_criteria: str) -> float:
-    """Calculate keyword overlap score."""
-    paper_text = f"{paper.get('title', '')} {paper.get('abstract', '')}"
+    """Calculate keyword overlap score with dynamic synonym matching."""
+    paper_text = f"{paper.get('title', '')} {paper.get('abstract', '')}".lower()
     if not paper_text.strip():
         return 0.0
     
     context_text = " ".join(research_questions) + " " + inclusion_criteria
+    context_text_lower = context_text.lower()
     
+    # Extract keywords from paper and context
     paper_kw = extract_keywords(paper_text)
-    context_kw = extract_keywords(context_text)
+    context_kw = extract_keywords(context_text_lower)
     
     if not context_kw:
         return 0.5
     
-    overlap = len(paper_kw.intersection(context_kw))
-    return min(overlap / len(context_kw), 1.0)
+    # Direct keyword overlap
+    direct_overlap = len(paper_kw.intersection(context_kw))
+    
+    # Dynamic synonym-based overlap
+    synonym_groups = generate_synonyms_for_topic(research_questions, inclusion_criteria)
+    synonym_matches = 0
+    
+    for main_term, synonyms in synonym_groups.items():
+        main_term_lower = main_term.lower()
+        # Check if main term or any synonym is in context
+        if main_term_lower in context_text_lower or any(syn.lower() in context_text_lower for syn in synonyms):
+            # Check if main term or any synonym is in paper
+            if main_term_lower in paper_text or any(syn.lower() in paper_text for syn in synonyms):
+                synonym_matches += 1
+    
+    # Combined score (weighted: 70% direct, 30% synonym)
+    total_score = (direct_overlap + synonym_matches * 0.5) / len(context_kw)
+    return min(total_score, 1.0)
 
 
 def analyze_and_set_thresholds_node(state: ScreeningState) -> dict:
@@ -210,12 +276,14 @@ Strategy:
 - If max_score > 0.5: Use STRICTER thresholds
 
 keyword_high_threshold: Auto-include papers above this
-- Should be 60-70% of max_score OR around 75th percentile
-- Example: if max=0.342, use 0.22-0.24
+- Should be 45-55% of max_score OR around 60th percentile
+- Example: if max=0.342, use 0.15-0.19
+- For multi-faceted topics, use lower end (45-50%)
 
 keyword_medium_threshold: Papers need TF-IDF review
-- Should be 40-50% of max_score OR around median
-- Example: if max=0.342, use 0.14-0.17
+- Should be 25-35% of max_score OR around 40th percentile
+- Example: if max=0.342, use 0.09-0.12
+- For multi-faceted topics, use lower end (25-30%)
 
 tfidf_threshold: Semantic similarity threshold
 - Use 0.35-0.45 for low max_scores (< 0.4)
@@ -244,14 +312,14 @@ Respond with JSON only:
         rec_high = recommendation['keyword_high_threshold']
         rec_medium = recommendation['keyword_medium_threshold']
         
-        # Override if too high
-        if rec_high > max_score * 0.8:
-            print(f"Warning: LLM's high threshold ({rec_high:.3f}) too high, adjusting to {max_score * 0.68:.3f}")
-            rec_high = max(max_score * 0.68, p75)
+        # Override if too high (more lenient thresholds)
+        if rec_high > max_score * 0.65:
+            print(f"Warning: LLM's high threshold ({rec_high:.3f}) too high, adjusting to {max_score * 0.50:.3f}")
+            rec_high = max(max_score * 0.50, np.percentile(sample_scores, 60))
         
-        if rec_medium > max_score * 0.55:
-            print(f"Warning: LLM's medium threshold ({rec_medium:.3f}) too high, adjusting to {max_score * 0.40:.3f}")
-            rec_medium = max(max_score * 0.40, p50)
+        if rec_medium > max_score * 0.40:
+            print(f"Warning: LLM's medium threshold ({rec_medium:.3f}) too high, adjusting to {max_score * 0.30:.3f}")
+            rec_medium = max(max_score * 0.30, np.percentile(sample_scores, 40))
         
         # Ensure high > medium
         if rec_high <= rec_medium:
