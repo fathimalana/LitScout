@@ -10,6 +10,7 @@ if env_path:
 
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+sys.path.insert(0, os.path.dirname(__file__)) # Add backend directory to path
 
 from pydantic import BaseModel, Field
 from langchain_core.tools import tool, render_text_description
@@ -49,9 +50,10 @@ qa_agent = MockAgent()
 
 # Import real agents if available
 try:
-    from agents.search_and_filter_agent import saf_agent
+    from agents.search_and_filter_agent import saf_agent, REPUTED_SOURCES
 except ImportError as e:
     saf_agent = MockAgent()
+    REPUTED_SOURCES = []
 
 try:
     from agents.screening_agent import screening_agent as real_screening
@@ -62,14 +64,18 @@ except ImportError as e:
 try:
     from agents.extraction_agent import extraction_agent as real_extraction
     extraction_agent = real_extraction
-    print("Real Extraction agent loaded")
 except ImportError as e:
     print(f"Using mock Extraction agent: {e}")
+
+try:
+    from agents.thematic_analysis_agent import thematic_analysis_agent as real_thematic
+    thematic_agent = real_thematic
+except ImportError as e:
+    print(f"Using mock Thematic Analysis agent: {e}")
 
 # Import adaptive extraction module
 try:
     from agents.adaptive_extraction import adaptive_extraction_loop
-    print("Adaptive extraction module loaded")
     USE_ADAPTIVE_EXTRACTION = True
 except ImportError as e:
     print(f"Adaptive extraction not available: {e}")
@@ -233,6 +239,10 @@ Consider the current year when interpreting relative time references like "recen
             start_year = current_year - 5
             end_year = current_year
             sources = []
+        
+        # Merge with REPUTED_SOURCES if sources list is empty or generic
+        if not sources:
+            sources = REPUTED_SOURCES
         
         saf_input = {
             "research_questions": research_questions,

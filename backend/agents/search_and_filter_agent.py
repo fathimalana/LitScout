@@ -24,6 +24,25 @@ llm = ChatGroq(
     temperature=0
 )
 
+# --- CONSTANTS ---
+REPUTED_SOURCES = [
+    "Springer",
+    "Elsevier",
+    "ScienceDirect",
+    "ACM",
+    "IEEE",
+    "Nature",
+    "Wiley",
+    "Taylor & Francis",
+    "Sage",
+    "Oxford University Press",
+    "Cambridge University Press",
+    "AAAI",
+    "PLOS",
+    "Science",
+    "PNAS" # Proceedings of the National Academy of Sciences
+]
+
 # --- 2. QUERY GENERATION LOGIC ---
 def generate_simple_query(research_question: str) -> str:
     """Uses an LLM to distill a research question into a simple keyword query."""
@@ -50,6 +69,10 @@ def paper_search(state: dict) -> dict:
     research_questions = state.get("research_questions", [])
     start_year = state.get("start_year", datetime.now().year - 5)
     end_year = state.get("end_year", datetime.now().year)
+    
+    # Use provided sources, or default to REPUTED_SOURCES if explicitly requested/configured
+    # For now, we respect the 'sources' passed in state. 
+    # If the orchestrator wants to use REPUTED_SOURCES, it should pass them.
     sources_to_include = state.get("sources", [])
     
     all_unique_papers = {}
@@ -108,12 +131,13 @@ def paper_search(state: dict) -> dict:
     print(f"  - {len(papers_in_date_range)} papers remaining after date filter ({start_year}-{end_year}).")
 
     # --- NEW: More Lenient Source Filter ---
+    # If sources are provided, we filter by them.
     if sources_to_include:
         filtered_by_source = []
         for paper in papers_in_date_range:
             venue = paper.get('venue', '') or ''
             
-            # If the venue is missing, we keep the paper by default
+            # If the venue is missing, we keep the paper by default (lenient)
             if not venue:
                 filtered_by_source.append(paper)
                 continue
@@ -122,9 +146,10 @@ def paper_search(state: dict) -> dict:
             if any(source.lower() in venue.lower() for source in sources_to_include):
                 filtered_by_source.append(paper)
         
-        print(f"  - {len(filtered_by_source)} papers remaining after source filter ({sources_to_include}).")
+        print(f"  - {len(filtered_by_source)} papers remaining after source filter.")
         final_paper_list = filtered_by_source
     else:
+        # No source filter applied
         final_paper_list = papers_in_date_range
 
     print(f"---SUB-AGENT: Found a total of {len(final_paper_list)} filtered, unique papers---")
