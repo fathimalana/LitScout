@@ -391,7 +391,13 @@ def thematic_analysis_tool(extracted_data: Dict, research_questions: List[str]) 
 
         themes = thematic_result.get("themes", [])
         print(f"Thematic analysis completed: {len(themes)} themes identified")
-
+        for i, theme in enumerate(themes, 1):
+            print(f"\nTHEME {i}: {theme.get('name', 'Untitled')}")
+            print(f"Description: {theme.get('description', 'No description')}")
+            print("Findings:")
+            for finding in theme.get("findings", [])[:3]:
+                print(f"  - {finding}")
+            print(f"Supported by {len(theme.get('citations', []))} papers")
         return {
             "themes": themes,
             "thematic_results": thematic_result.get("thematic_results", {})
