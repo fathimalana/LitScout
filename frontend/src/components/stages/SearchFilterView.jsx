@@ -16,19 +16,12 @@ const SearchFilterView = ({ data }) => {
   }, [data]);
 
   // --- LOGIC: DEFINE WHAT COUNTS AS "KEPT" ---
-  // Inside SearchFilterView.jsx
-    const isPaperKept = (status) => {
-    if (!status) return true; // Default to green if missing
-    const s = status.toLowerCase().trim();
-    return ['selected', 'kept', 'passed', 'relevant'].includes(s);
-    };
+  const isPaperKept = (status) => {
+    const s = (status || "").toString().toLowerCase().trim();
+    // Added 'included', 'approved', 'yes' to be safe
+    return ['selected', 'kept', 'passed', 'relevant', 'included', 'approved', 'yes'].includes(s);
+  };
 
-    const isPaperRejected = (status) => {
-    if (!status) return false;
-    return status.toLowerCase().trim() === 'rejected';
-    };
-  
-  
   return (
     <div className="space-y-4 animate-fadeIn">
         {/* Summary Statistics */}
@@ -84,7 +77,7 @@ const SearchFilterView = ({ data }) => {
                                             ? 'bg-green-600 text-white border-green-700' 
                                             : 'bg-red-600 text-white border-red-700'
                                         }`}>
-                                            {p.status || "Kept"}
+                                            {p.status || "Unknown"}
                                         </span>
                                     </td>
                                 </tr>
