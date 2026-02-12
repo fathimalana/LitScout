@@ -380,16 +380,37 @@ def thematic_analysis_tool(extracted_data: Dict, research_questions: List[str]) 
         thematic_input = {
             "extracted_data": extracted_data,
             "research_questions": research_questions,
-            "clustering_method": "hierarchical",
-            "min_theme_size": 3
+            "aggregated_text": [],
+            "initial_themes": [],
+            "themes": [],
+            "thematic_results": {}
         }
+
         print(f"Running thematic analysis")
         thematic_result = thematic_agent.invoke(thematic_input)
-        print(f"Thematic analysis completed")
-        return thematic_result
+
+        themes = thematic_result.get("themes", [])
+        print(f"Thematic analysis completed: {len(themes)} themes identified")
+        for i, theme in enumerate(themes, 1):
+            print(f"\nTHEME {i}: {theme.get('name', 'Untitled')}")
+            print(f"Description: {theme.get('description', 'No description')}")
+            print("Findings:")
+            for finding in theme.get("findings", [])[:3]:
+                print(f"  - {finding}")
+            print(f"Supported by {len(theme.get('citations', []))} papers")
+        return {
+            "themes": themes,
+            "thematic_results": thematic_result.get("thematic_results", {})
+        }
+
     except Exception as e:
         print(f"Error in thematic_analysis_tool: {e}")
-        return {"themes": [], "thematic_results": {}, "error": str(e)}
+        return {
+            "themes": [],
+            "thematic_results": {},
+            "error": str(e)
+        }
+
 
 @tool
 def synthesis_tool(themes: List[Dict], extracted_data: Dict, research_questions: List[str], 
