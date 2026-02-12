@@ -697,7 +697,29 @@ def format_stage_1_planner(state: dict) -> dict:
 def format_stage_2_search(state: dict) -> dict:
     raw = state.get("raw_papers", [])
     filtered = state.get("filtered_papers", [])
+    
+    # 1. Identify which papers were rejected
+    filtered_titles = {p.get("title") for p in filtered}
+    
+    formatted_papers = []
+    
+    # 2. Process Kept Papers (Limit to 10 for UI performance)
+    for paper in filtered[:50]:
+        p_data = dict(paper)
+        p_data["status"] = "Kept"
+        formatted_papers.append(p_data)
+        
+    # 3. Process some Rejected Papers (Limit to 5 so the 'Rejected' tab isn't empty)
+    rejected_count = 0
+    for paper in raw:
+        if paper.get("title") not in filtered_titles and rejected_count < 50:
+            p_data = dict(paper)
+            p_data["status"] = "Rejected"
+            formatted_papers.append(p_data)
+            rejected_count += 1
+
     status = "completed" if filtered else "loading" if raw else "pending"
+    
     return {
         "id": "stage_2",
         "name": "Deep Crawler",
@@ -705,8 +727,12 @@ def format_stage_2_search(state: dict) -> dict:
         "status": status,
         "stats": f"Found {len(raw)} | Kept {len(filtered)}",
         "data": {
-            "summary": {"total": len(raw), "selected": len(filtered), "rejected": len(raw) - len(filtered)},
-            "papers": filtered[:10] 
+            "summary": {
+                "total": len(raw), 
+                "selected": len(filtered), 
+                "rejected": len(raw) - len(filtered)
+            },
+            "papers": formatted_papers # Now contains both Kept and Rejected
         }
     }
 def format_stage_3_screening(state: dict):
@@ -733,7 +759,7 @@ def format_stage_3_screening(state: dict):
                 "exclusion": f"{exclusion_rate:.1f}%",
                 "method": "LLM-based Semantic Filtering"
             },
-            "papers": output_papers[:15] 
+            "papers": output_papers[:] 
         }
     }
 async def run_orchestrator(user_prompt: str):
