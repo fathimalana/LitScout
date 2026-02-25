@@ -697,7 +697,29 @@ def format_stage_1_planner(state: dict) -> dict:
 def format_stage_2_search(state: dict) -> dict:
     raw = state.get("raw_papers", [])
     filtered = state.get("filtered_papers", [])
+    
+    # 1. Identify which papers were rejected
+    filtered_titles = {p.get("title") for p in filtered}
+    
+    formatted_papers = []
+    
+    # 2. Process Kept Papers (Limit to 10 for UI performance)
+    for paper in filtered[:10]:
+        p_data = dict(paper)
+        p_data["status"] = "Kept"
+        formatted_papers.append(p_data)
+        
+    # 3. Process some Rejected Papers (Limit to 5 so the 'Rejected' tab isn't empty)
+    rejected_count = 0
+    for paper in raw:
+        if paper.get("title") not in filtered_titles and rejected_count < 5:
+            p_data = dict(paper)
+            p_data["status"] = "Rejected"
+            formatted_papers.append(p_data)
+            rejected_count += 1
+
     status = "completed" if filtered else "loading" if raw else "pending"
+    
     return {
         "id": "stage_2",
         "name": "Deep Crawler",
@@ -705,8 +727,12 @@ def format_stage_2_search(state: dict) -> dict:
         "status": status,
         "stats": f"Found {len(raw)} | Kept {len(filtered)}",
         "data": {
-            "summary": {"total": len(raw), "selected": len(filtered), "rejected": len(raw) - len(filtered)},
-            "papers": filtered[:10] 
+            "summary": {
+                "total": len(raw), 
+                "selected": len(filtered), 
+                "rejected": len(raw) - len(filtered)
+            },
+            "papers": formatted_papers # Now contains both Kept and Rejected
         }
     }
 def format_stage_3_screening(state: dict):
@@ -736,6 +762,69 @@ def format_stage_3_screening(state: dict):
             "papers": output_papers[:15] 
         }
     }
+def format_stage_4_extraction(state: dict) -> dict:
+    # Handle the structure returned by adaptive_extraction or fallback
+    extracted_obj = state.get("extracted_data", {})
+    papers = extracted_obj.get("papers", [])
+    results = state.get("extraction_results", {})
+    
+    total_attempted = results.get("total_attempted", len(state.get("screened_papers", [])))
+    total_extracted = results.get("total_extracted", len(papers))
+    
+    # Calculate success rate for the stats pill
+    success_rate = (total_extracted / total_attempted * 100) if total_attempted > 0 else 0
+
+    return {
+        "id": "stage_4",
+        "name": "Data Extractor",
+        "role": "PDF Processing",
+        "status": "completed" if total_extracted > 0 else "loading",
+        "stats": f"PDFs: {total_extracted}/{total_attempted} ({success_rate:.0f}%)",
+        "data": {
+            "summary": {
+                "total_attempted": total_attempted,
+                "successfully_extracted": total_extracted,
+                "iterations": len(results.get("iterations", [])),
+                "method": "Adaptive PyMuPDF Extraction"
+            },
+            # We send a slice to the UI to avoid crashing the browser with huge text blocks
+            "papers": [
+                {
+                    "title": p.get("title"),
+                    "authors": p.get("authors"),
+                    "text_preview": p.get("text", "")[:500] + "...", # Preview only
+                    "full_text_available": bool(p.get("text"))
+                } for p in papers[:10]
+            ]
+        }
+    }
+def format_stage_5_thematic(state: dict) -> dict:
+    themes = state.get("themes", [])
+    status = "completed" if themes else "loading"
+    
+    return {
+        "id": "stage_5",
+        "name": "Theme Mapper",
+        "role": "Thematic Analysis",
+        "status": status,
+        "stats": f"{len(themes)} Key Themes",
+        "data": {
+            "summary": {
+                "total_themes": len(themes),
+                "analysis_depth": "Semantic Pattern Clustering",
+                "status": "Synthesis Ready" if themes else "Synthesizing themes..."
+            },
+            "themes": [
+                {
+                    "name": t.get("name", "Untitled Theme"),
+                    "description": t.get("description", ""),
+                    "findings": t.get("findings", []),
+                    "relevance": len(t.get("citations", [])),
+                    "papers_count": len(t.get("citations", []))
+                } for t in themes
+            ]
+        }
+    }
 async def run_orchestrator(user_prompt: str):
     # Initialize fresh state
     initial_state = LitScoutState(user_prompt=user_prompt)
@@ -747,7 +836,7 @@ async def run_orchestrator(user_prompt: str):
         # Increased recursion limit for deep research tasks
         async for step in app.astream(initial_state, {"recursion_limit": 50}):
             for node, output in step.items():
-               # yield {"type": "log", "message": f"✅ Agent '{node}' finished step."} 
+                # yield {"type": "log", "message": f"✅ Agent '{node}' finished step."} 
                 
                 if isinstance(output, dict):
                     accumulated_state.update(output)
@@ -763,38 +852,64 @@ async def run_orchestrator(user_prompt: str):
                 if accumulated_state.get("raw_papers") or accumulated_state.get("filtered_papers"):
                     current_steps.append(format_stage_2_search(accumulated_state))
                 
-                # Stage 3: SCREENING (The new addition)
+                # Stage 3: Screening
                 if accumulated_state.get("screened_papers"):
                     current_steps.append(format_stage_3_screening(accumulated_state))
+                
+                # Stage 4: EXTRACTION (The new logic)
+                # We check for extracted_data or extraction_results to show progress
+                if accumulated_state.get("extracted_data") or accumulated_state.get("extraction_results"):
+                    current_steps.append(format_stage_4_extraction(accumulated_state))
+                if accumulated_state.get("themes") or accumulated_state.get("thematic_results"):
+                    current_steps.append(format_stage_5_thematic(accumulated_state))
 
                 if current_steps:
+                    # Dynamic message based on which agent just finished
+                    msg = "Processing literature..."
+                    if node == "execute_tool":
+                        msg = f"Completed {accumulated_state.get('next_agent', 'task')}..."
+                    
                     yield {
                         "type": "final",
-                        "report": "Analyzing paper relevance and screening content...",
+                        "report": msg,
                         "steps": current_steps
                     }
             
         # Final Package after graph finishes
         if accumulated_state:
+            # Construct final step list
+            final_steps = [
+                format_stage_1_planner(accumulated_state),
+                format_stage_2_search(accumulated_state),
+                format_stage_3_screening(accumulated_state)
+            ]
+            
+            # Add extraction to final list if it was reached
+            if accumulated_state.get("extracted_data"):
+                final_steps.append(format_stage_4_extraction(accumulated_state))
+            if accumulated_state.get("themes") or accumulated_state.get("thematic_results"):
+                final_steps.append(format_stage_5_thematic(accumulated_state))
+
             yield {
                 "type": "final",
-                "report": accumulated_state.get("final_report", "Research complete."),
-                "steps": [
-                    format_stage_1_planner(accumulated_state),
-                    format_stage_2_search(accumulated_state),
-                    format_stage_3_screening(accumulated_state) # Final update
-                ]
+                "report": accumulated_state.get("final_report", "Research complete. All data extracted."),
+                "steps": final_steps
             }
     
     except Exception as e:
         yield {"type": "log", "message": f"⚠️ Notice: {str(e)}"}
         if accumulated_state:
+            # Fallback display for partial results
+            error_steps = [
+                format_stage_1_planner(accumulated_state), 
+                format_stage_2_search(accumulated_state),
+                format_stage_3_screening(accumulated_state)
+            ]
+            if accumulated_state.get("extracted_data"):
+                error_steps.append(format_stage_4_extraction(accumulated_state))
+                
             yield {
                 "type": "final",
-                "report": "Process paused. Results gathered so far are displayed.",
-                "steps": [
-                    format_stage_1_planner(accumulated_state), 
-                    format_stage_2_search(accumulated_state),
-                    format_stage_3_screening(accumulated_state)
-                ]
+                "report": "Process paused. Partial results are displayed.",
+                "steps": error_steps
             }
