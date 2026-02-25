@@ -13,7 +13,7 @@ load_dotenv()
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
 llm = ChatGroq(
-    model="llama-3.1-8b-instant",
+    model="llama-3.3-70b-versatile",
     api_key=GROQ_API_KEY,
     temperature=0
 )
@@ -187,6 +187,15 @@ Respond with JSON only:
         new_limit = decision["new_limit"]
         new_limit = max(current_limit, min(new_limit, total_available))
         decision["new_limit"] = new_limit
+        
+        # Ensure progress if continuing but LLM didn't increase limit
+        if decision.get("should_continue", False) and new_limit <= current_limit and new_limit < total_available:
+            # Force increase to prevent infinite loops or stuck states
+            # Add at least 10% or 5 papers
+            increase_amount = max(5, int(current_limit * 0.1))
+            new_limit = min(current_limit + increase_amount, total_available)
+            decision["new_limit"] = new_limit
+            decision["reasoning"] += f" | Auto-correction: Forced limit increase to {new_limit} to ensure progress"
         
         # Force stop if exhausted or reached target
         if new_limit >= total_available:
