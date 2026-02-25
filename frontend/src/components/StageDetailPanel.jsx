@@ -2,9 +2,22 @@ import React from 'react';
 import StrategyView from './stages/StrategyView';
 import SearchFilterView from './stages/SearchFilterView';
 import ScreeningView from './stages/ScreeningView';
+import ExtractionView from './stages/ExtractionView';
+// 1. IMPORT THE NEW VIEW
+import ThematicAnalysisView from './stages/ThematicAnalysisView';
 
 const StageDetailPanel = ({ stage, onClose }) => {
   if (!stage) return null;
+
+  // 2. UPDATE SUPPORTED ROLES - Add "Thematic Analysis" to the array
+  const supportedRoles = [
+    "Strategy", 
+    "Search & Filter", 
+    "Screening", 
+    "Extraction", 
+    "PDF Processing",
+    "Thematic Analysis"
+  ];
 
   return (
     <div className="bg-white rounded-xl shadow-xl mb-6 animate-slideUp border border-gray-200 flex flex-col h-[500px] overflow-hidden">
@@ -20,8 +33,6 @@ const StageDetailPanel = ({ stage, onClose }) => {
       
       {/* Content Area */}
       <div className="flex-grow overflow-y-auto p-6 custom-scrollbar">
-          
-          {/* Idle State */}
           {stage.status === 'idle' && (
               <div className="text-gray-400 italic text-center p-10 border-2 border-dashed border-gray-100 rounded-xl m-4">
                   Waiting for research to start... <br/>
@@ -29,20 +40,35 @@ const StageDetailPanel = ({ stage, onClose }) => {
               </div>
           )}
 
-          {/* Render specific views based on Role */}
           {stage.status !== 'idle' && (
              <>
+                {/* Stage 1 */}
                 {stage.role === "Strategy" && <StrategyView data={stage.data} />}
                 
+                {/* Stage 2 */}
                 {stage.role === "Search & Filter" && <SearchFilterView data={stage.data} />}
                 
+                {/* Stage 3 */}
                 {stage.role === "Screening" && <ScreeningView data={stage.data} />}
                 
-                {/* Fallback for other stages (Extraction, Synthesis, etc.) */}
-                {!['Strategy', 'Search & Filter', 'Screening'].includes(stage.role) && (
+                {/* Stage 4 */}
+                {(stage.role === "Extraction" || stage.role === "PDF Processing") && (
+                    <ExtractionView data={stage.data} />
+                )}
+
+                {/* 3. ADD THE THEMATIC ANALYSIS CASE */}
+                {stage.role === "Thematic Analysis" && (
+                    <ThematicAnalysisView data={stage.data} />
+                )}
+                
+                {/* Fallback */}
+                {!supportedRoles.includes(stage.role) && (
                     <div className="text-gray-500 italic text-center p-8">
                         The detailed view for <strong>{stage.name}</strong> is under construction. <br/>
-                        <span className="text-xs text-gray-400">Raw data: {JSON.stringify(stage.data).slice(0, 50)}...</span>
+                        <div className="mt-4 p-3 bg-gray-50 rounded border border-gray-100 text-[10px] font-mono text-left overflow-hidden">
+                            <span className="text-blue-600 font-bold">Detected Role:</span> {stage.role} <br/>
+                            <span className="text-emerald-600 font-bold">Raw data:</span> {JSON.stringify(stage.data).slice(0, 100)}...
+                        </div>
                     </div>
                 )}
              </>
