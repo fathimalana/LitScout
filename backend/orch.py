@@ -47,6 +47,7 @@ extraction_agent = MockAgent()
 thematic_agent = MockAgent()
 synthesis_agent = MockAgent()
 qa_agent = MockAgent()
+report_agent = MockAgent()
 
 # Import real agents if available
 try:
@@ -72,6 +73,24 @@ try:
     thematic_agent = real_thematic
 except ImportError as e:
     print(f"Using mock Thematic Analysis agent: {e}")
+
+try:
+    from agents.synthesis_agent import synthesis_agent as real_synthesis
+    synthesis_agent = real_synthesis
+except ImportError as e:
+    print(f"Using mock Synthesis agent: {e}")
+
+try:
+    from agents.quality_assurance_agent import qa_agent as real_qa
+    qa_agent = real_qa
+except ImportError as e:
+    print(f"Using mock QA agent: {e}")
+
+try:
+    from agents.report_generation_agent import report_generation_agent as real_report
+    report_agent = real_report
+except ImportError as e:
+    print(f"Using mock Report Generation agent: {e}")
 
 # Import adaptive extraction module
 try:
@@ -123,7 +142,10 @@ class LitScoutState(BaseModel):
     # Quality Assurance Phase
     quality_report: Dict = Field(default_factory=dict)
     quality_passed: bool = False
-    
+
+    # Report Generation Phase
+    report_metadata: Dict = Field(default_factory=dict)
+
     # Final Output
     final_report: str = ""
     
@@ -436,70 +458,62 @@ def synthesis_tool(themes: List[Dict], extracted_data: Dict, research_questions:
 @tool
 def quality_assurance_tool(synthesis_draft: str, extracted_data: Dict, 
                           research_questions: List[str]) -> Dict[str, Any]:
-    """Quality Assurance Agent Tool"""
+    """Quality Assurance Agent Tool — delegates to the real QA LangGraph agent."""
     print("---TOOL: Quality Assurance Agent---")
     try:
         qa_input = {
-            "synthesis_draft": synthesis_draft,
-            "extracted_data": extracted_data,
+            "synthesis_draft":    synthesis_draft,
+            "extracted_data":     extracted_data,
             "research_questions": research_questions,
-            "quality_criteria": {
-                "coherence_check": True,
-                "citation_check": True,
-                "plagiarism_check": True,
-                "completeness_check": True
-            }
+            # Intermediate fields (required by QAState TypedDict)
+            "coverage_result":    {},
+            "citation_result":    {},
+            # Output fields initialised empty
+            "quality_report":     {},
+            "quality_passed":     False
         }
-        print(f"Running quality checks")
+        print("Running QA agent pipeline…")
         qa_result = qa_agent.invoke(qa_input)
-        print(f"QA completed")
+        print(f"QA completed: score={qa_result.get('quality_report', {}).get('score', 'N/A')}, "
+              f"passed={qa_result.get('quality_passed', False)}")
         return qa_result
     except Exception as e:
         print(f"Error in quality_assurance_tool: {e}")
-        return {"quality_report": {"passed": False, "score": 0.0}, "quality_passed": False, "error": str(e)}
+        return {"quality_report": {"passed": False, "score": 0.0, "summary": f"QA error: {e}"}, "quality_passed": False, "error": str(e)}
 
 @tool
-def generate_final_report(user_prompt: str, synthesis_draft: str, research_questions: List[str], 
+def generate_final_report(user_prompt: str, synthesis_draft: str, research_questions: List[str],
                           quality_report: Dict, themes: List[Dict]) -> Dict[str, Any]:
-    """Generates the final polished report"""
-    print("---TOOL: Generating Final Report---")
+    """Report Generation Agent Tool — delegates to the real Report Generation LangGraph agent."""
+    print("---TOOL: Report Generation Agent---")
     try:
-        report_prompt = f"""Create a comprehensive literature review report based on:
-
-            Original Query: {user_prompt}
-
-            Research Questions:
-            {chr(10).join(f"   {i+1}. {q}" for i, q in enumerate(research_questions))}
-
-            Themes Identified: {len(themes)}
-            Quality Score: {quality_report.get('score', 'N/A')}
-
-            Synthesis:
-            {synthesis_draft}
-
-            Quality Assessment:
-            {quality_report.get('summary', 'No assessment available')}
-
-            Format with:
-            1. Executive Summary
-            2. Research Methodology
-            3. Key Themes and Findings
-            4. Quality Assessment
-            5. Conclusions
-            6. References
-"""
-        
-        prompt = ChatPromptTemplate.from_template(report_prompt)
-        chain = prompt | llm
-        response = chain.invoke({})
-        report = response.content
-        
-        print(f"Final report generated ({len(report)} characters)")
-        return {"final_report": report, "workflow_complete": True}
-        
+        report_input = {
+            "synthesis_draft":    synthesis_draft,
+            "themes":             themes,
+            "research_questions": research_questions,
+            "user_prompt":        user_prompt,
+            "quality_report":     quality_report,
+            # Intermediate fields initialised empty
+            "report_plan":        [],
+            "section_drafts":     [],
+            # Output fields initialised empty
+            "final_report":       "",
+            "report_metadata":    {}
+        }
+        print("Running Report Generation agent pipeline…")
+        report_result = report_agent.invoke(report_input)
+        final_report  = report_result.get("final_report", "")
+        metadata      = report_result.get("report_metadata", {})
+        print(f"Report generated: {metadata.get('word_count', len(final_report.split()))} words, "
+              f"{metadata.get('section_count', '?')} sections.")
+        return {
+            "final_report":    final_report,
+            "report_metadata": metadata,
+            "workflow_complete": True
+        }
     except Exception as e:
         print(f"Error in generate_final_report: {e}")
-        return {"final_report": f"Error: {e}", "workflow_complete": True, "error": str(e)}
+        return {"final_report": f"Error generating report: {e}", "workflow_complete": True, "error": str(e)}
 
 # Map tools
 tools = [
@@ -825,6 +839,86 @@ def format_stage_5_thematic(state: dict) -> dict:
             ]
         }
     }
+
+def format_stage_6_synthesis(state: dict) -> dict:
+    draft            = state.get("synthesis_draft", "")
+    synthesis_results = state.get("synthesis_results", {})
+    word_count       = synthesis_results.get("word_count", len(draft.split()))
+    total_themes     = synthesis_results.get("total_themes", 0)
+    status           = "completed" if draft and word_count > 50 else "loading"
+
+    return {
+        "id": "stage_6",
+        "name": "Synthesis Writer",
+        "role": "Synthesis",
+        "status": status,
+        "stats": f"{word_count} words · {total_themes} themes",
+        "data": {
+            "summary": {
+                "word_count":    word_count,
+                "total_themes":  total_themes,
+                "section_count": synthesis_results.get("section_count", 0),
+                "method":        synthesis_results.get("method", "LLM narrative synthesis"),
+                "status":        synthesis_results.get("status", "complete")
+            },
+            "draft": draft
+        }
+    }
+def format_stage_7_qa(state: dict) -> dict:
+    qr     = state.get("quality_report", {})
+    passed = state.get("quality_passed", False)
+    score  = qr.get("score", 0.0)
+    status = "completed" if qr else "loading"
+    return {
+        "id":     "stage_7",
+        "name":   "QA Inspector",
+        "role":   "Quality Assurance",
+        "status": status,
+        "stats":  f"Score: {score}/10 · {'Passed' if passed else 'Needs Work'}",
+        "data": {
+            "summary": {
+                "score":            score,
+                "coverage_score":   qr.get("coverage_score", 0.0),
+                "citation_count":   qr.get("citation_count", 0),
+                "word_count":       qr.get("word_count", 0),
+                "passed":           passed,
+                "status":           qr.get("status", "unknown"),
+                "method":           qr.get("method", "LangGraph QA pipeline")
+            },
+            "covered_questions": qr.get("covered_questions", []),
+            "missing_questions": qr.get("missing_questions", []),
+            "suggestions":       qr.get("suggestions", []),
+            "reasoning":         qr.get("reasoning", "")
+        }
+    }
+
+
+def format_stage_8_report(state: dict) -> dict:
+    report   = state.get("final_report", "")
+    metadata = state.get("report_metadata", {})
+    wc       = metadata.get("word_count", len(report.split()))
+    secs     = metadata.get("section_count", 0)
+    status   = "completed" if report and wc > 200 else "loading"
+    return {
+        "id":     "stage_8",
+        "name":   "Report Builder",
+        "role":   "Report Generation",
+        "status": status,
+        "stats":  f"{wc} words · {secs} sections",
+        "data": {
+            "summary": {
+                "word_count":    wc,
+                "section_count": secs,
+                "theme_count":   metadata.get("theme_count", 0),
+                "quality_score": metadata.get("quality_score", "N/A"),
+                "method":        metadata.get("method", "LangGraph report generation"),
+                "status":        metadata.get("status", "complete")
+            },
+            "report": report
+        }
+    }
+
+
 async def run_orchestrator(user_prompt: str):
     # Initialize fresh state
     initial_state = LitScoutState(user_prompt=user_prompt)
@@ -862,6 +956,12 @@ async def run_orchestrator(user_prompt: str):
                     current_steps.append(format_stage_4_extraction(accumulated_state))
                 if accumulated_state.get("themes") or accumulated_state.get("thematic_results"):
                     current_steps.append(format_stage_5_thematic(accumulated_state))
+                if accumulated_state.get("synthesis_draft") or accumulated_state.get("synthesis_results"):
+                    current_steps.append(format_stage_6_synthesis(accumulated_state))
+                if accumulated_state.get("quality_report") or accumulated_state.get("quality_passed"):
+                    current_steps.append(format_stage_7_qa(accumulated_state))
+                if accumulated_state.get("final_report") or accumulated_state.get("report_metadata"):
+                    current_steps.append(format_stage_8_report(accumulated_state))
 
                 if current_steps:
                     # Dynamic message based on which agent just finished
@@ -889,6 +989,12 @@ async def run_orchestrator(user_prompt: str):
                 final_steps.append(format_stage_4_extraction(accumulated_state))
             if accumulated_state.get("themes") or accumulated_state.get("thematic_results"):
                 final_steps.append(format_stage_5_thematic(accumulated_state))
+            if accumulated_state.get("synthesis_draft") or accumulated_state.get("synthesis_results"):
+                final_steps.append(format_stage_6_synthesis(accumulated_state))
+            if accumulated_state.get("quality_report"):
+                final_steps.append(format_stage_7_qa(accumulated_state))
+            if accumulated_state.get("final_report") or accumulated_state.get("report_metadata"):
+                final_steps.append(format_stage_8_report(accumulated_state))
 
             yield {
                 "type": "final",
@@ -907,6 +1013,12 @@ async def run_orchestrator(user_prompt: str):
             ]
             if accumulated_state.get("extracted_data"):
                 error_steps.append(format_stage_4_extraction(accumulated_state))
+            if accumulated_state.get("synthesis_draft") or accumulated_state.get("synthesis_results"):
+                error_steps.append(format_stage_6_synthesis(accumulated_state))
+            if accumulated_state.get("quality_report"):
+                error_steps.append(format_stage_7_qa(accumulated_state))
+            if accumulated_state.get("final_report") or accumulated_state.get("report_metadata"):
+                error_steps.append(format_stage_8_report(accumulated_state))
                 
             yield {
                 "type": "final",

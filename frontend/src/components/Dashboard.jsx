@@ -6,25 +6,25 @@ import StageDetailPanel from './StageDetailPanel';
 const Logo = () => <span className="font-black text-xl tracking-tight">Lit<span className="text-blue-600">Scout</span></span>;
 
 const INITIAL_WORKFLOW = [
-    { id: "stage_1", name: "Research Planner", role: "Strategy", status: "idle", stats: "Waiting...", data: {} },
-    { id: "stage_2", name: "Deep Crawler", role: "Search & Filter", status: "idle", stats: "Waiting...", data: {} },
-    { id: "stage_3", name: "Semantic Screen", role: "Screening", status: "idle", stats: "Waiting...", data: {} },
-    { id: "stage_4", name: "Data Extractor", role: "Extraction", status: "idle", stats: "Waiting...", data: {} },
-    { id: "stage_5", name: "Theme Mapper", role: "Thematic Analysis", status: "idle", stats: "Waiting...", data: {} },
-    { id: "stage_6", name: "Synthesizer", role: "Drafting", status: "idle", stats: "Waiting...", data: {} },
-    { id: "stage_7", name: "QA Bot", role: "Quality Assurance", status: "idle", stats: "Waiting...", data: {} },
-    { id: "stage_8", name: "Publisher", role: "Final Report", status: "idle", stats: "Waiting...", data: {} }
+  { id: "stage_1", name: "Research Planner", role: "Strategy", status: "idle", stats: "Waiting...", data: {} },
+  { id: "stage_2", name: "Deep Crawler", role: "Search & Filter", status: "idle", stats: "Waiting...", data: {} },
+  { id: "stage_3", name: "Semantic Screen", role: "Screening", status: "idle", stats: "Waiting...", data: {} },
+  { id: "stage_4", name: "Data Extractor", role: "Extraction", status: "idle", stats: "Waiting...", data: {} },
+  { id: "stage_5", name: "Theme Mapper", role: "Thematic Analysis", status: "idle", stats: "Waiting...", data: {} },
+  { id: "stage_6", name: "Synthesis Writer", role: "Synthesis", status: "idle", stats: "Waiting...", data: {} },
+  { id: "stage_7", name: "QA Bot", role: "Quality Assurance", status: "idle", stats: "Waiting...", data: {} },
+  { id: "stage_8", name: "Publisher", role: "Final Report", status: "idle", stats: "Waiting...", data: {} }
 ];
 
 // Sub-component for sidebar
 const Sidebar = ({ isOpen, history, onNewChat, onLoadHistory }) => (
   <div className={`${isOpen ? 'w-64' : 'w-0'} bg-gray-900 text-gray-100 transition-all duration-300 flex flex-col border-r border-gray-800 overflow-hidden`}>
     <div className="p-4 border-b border-gray-800 flex justify-between items-center whitespace-nowrap">
-       <div className="flex items-center gap-2 text-white"><Logo /></div>
-       <button onClick={onNewChat} className="text-xs bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded transition-colors">+ New</button>
+      <div className="flex items-center gap-2 text-white"><Logo /></div>
+      <button onClick={onNewChat} className="text-xs bg-gray-800 hover:bg-gray-700 px-3 py-1.5 rounded transition-colors">+ New</button>
     </div>
     <div className="overflow-y-auto p-2 flex-grow custom-scrollbar">
-       {history.map((item) => (
+      {history.map((item) => (
         <button key={item.id} onClick={() => onLoadHistory(item.id)} className="w-full text-left p-3 rounded hover:bg-gray-800 mb-1 group transition-colors">
           <div className="text-sm truncate text-gray-300 group-hover:text-white">{item.query}</div>
           <div className="text-xs text-gray-600 mt-1">{new Date(item.created_at).toLocaleDateString()}</div>
@@ -42,7 +42,7 @@ function Dashboard() {
   const [selectedStage, setSelectedStage] = useState(null);
   const [history, setHistory] = useState([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
-  const [terminalLogs, setTerminalLogs] = useState([]); 
+  const [terminalLogs, setTerminalLogs] = useState([]);
   const terminalEndRef = useRef(null);
 
   useEffect(() => {
@@ -68,20 +68,20 @@ function Dashboard() {
     setSelectedStage(null);
     setTerminalLogs([]);
     setTimeout(() => {
-        const item = history.find(h => h.id === id);
-        if (item) {
-            setFullReport(item.report);
-            setWorkflow(item.workflow || []);
-            setInputValue(item.query);
-        }
-        setLoading(false);
+      const item = history.find(h => h.id === id);
+      if (item) {
+        setFullReport(item.report);
+        setWorkflow(item.workflow || []);
+        setInputValue(item.query);
+      }
+      setLoading(false);
     }, 500);
   };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
     if (!inputValue.trim()) return;
-    
+
     setLoading(true);
     setFullReport(null);
     setSelectedStage(null);
@@ -118,13 +118,13 @@ function Dashboard() {
                 setTerminalLogs(prev => [...prev, data.message]);
               } else if (data.type === "final") {
                 setFullReport(data.report);
-                setWorkflow(data.steps); 
+                setWorkflow(data.steps);
                 const newEntry = {
-                    id: Date.now(),
-                    query: inputValue,
-                    report: data.report,
-                    workflow: data.steps,
-                    created_at: new Date().toISOString()
+                  id: Date.now(),
+                  query: inputValue,
+                  report: data.report,
+                  workflow: data.steps,
+                  created_at: new Date().toISOString()
                 };
                 const updatedHistory = [newEntry, ...history];
                 setHistory(updatedHistory);
@@ -150,13 +150,13 @@ function Dashboard() {
 
       <div className="flex-grow flex flex-col h-screen relative bg-white transition-all">
         <button onClick={() => setIsSidebarOpen(!isSidebarOpen)} className="absolute top-4 left-4 z-20 text-gray-500 hover:text-gray-800 transition-transform p-1 rounded-md hover:bg-gray-100">
-           {isSidebarOpen ? '←' : '→'}
+          {isSidebarOpen ? '←' : '→'}
         </button>
 
         <header className="p-4 border-b text-center font-bold text-gray-800 bg-white shadow-sm z-10">Research Orchestrator</header>
 
         <main className="flex-grow p-6 overflow-y-auto w-full max-w-6xl mx-auto custom-scrollbar">
-          
+
           {/* Welcome Screen */}
           {!loading && !fullReport && terminalLogs.length === 0 && (
             <div className="text-center text-gray-500 mt-20 mb-10">
@@ -175,7 +175,7 @@ function Dashboard() {
               <div className="h-40 overflow-y-auto custom-scrollbar space-y-1 font-mono text-xs md:text-sm">
                 {terminalLogs.map((log, i) => (
                   <div key={i} className="text-emerald-400 leading-relaxed break-words">
-                    <span className="text-slate-600 mr-2 select-none">[{new Date().toLocaleTimeString([], {hour12:false})}]</span>
+                    <span className="text-slate-600 mr-2 select-none">[{new Date().toLocaleTimeString([], { hour12: false })}]</span>
                     <span className="text-blue-500 mr-2 select-none">➜</span>
                     {log}
                   </div>
@@ -188,25 +188,25 @@ function Dashboard() {
 
           {/* Workflow Buttons */}
           <WorkflowBar workflow={workflow} selectedStage={selectedStage} onSelectStage={setSelectedStage} />
-          
+
           {/* Detail Panel */}
           <StageDetailPanel stage={selectedStage} onClose={() => setSelectedStage(null)} />
-          
+
           {/* REMOVED: <ReportView /> is deleted. 
              The report text will ONLY show when you click the "Publisher" button 
              because we added PublisherView to StageDetailPanel. */}
-        
+
         </main>
 
         <footer className="p-4 bg-white border-t z-20">
           <form onSubmit={handleSubmit} className="max-w-4xl mx-auto flex gap-4">
-            <input 
-                className="flex-grow border border-gray-300 rounded-full px-5 py-3 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm transition-all bg-gray-50 focus:bg-white" 
-                value={inputValue} onChange={e => setInputValue(e.target.value)} 
-                placeholder="Enter research topic..." disabled={loading}
+            <input
+              className="flex-grow border border-gray-300 rounded-full px-5 py-3 focus:ring-2 focus:ring-blue-500 outline-none shadow-sm transition-all bg-gray-50 focus:bg-white"
+              value={inputValue} onChange={e => setInputValue(e.target.value)}
+              placeholder="Enter research topic..." disabled={loading}
             />
             <button type="submit" disabled={loading} className="bg-blue-600 text-white px-8 py-3 rounded-full hover:bg-blue-700 disabled:bg-gray-400 font-medium transition-all shadow-md hover:shadow-lg active:scale-95">
-                {loading ? "Orchestrating..." : "Start Research"}
+              {loading ? "Orchestrating..." : "Start Research"}
             </button>
           </form>
         </footer>
