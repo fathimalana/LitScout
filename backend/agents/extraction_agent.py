@@ -1,3 +1,4 @@
+import concurrent.futures
 import os
 import json
 import re
@@ -422,7 +423,9 @@ def fetch_pdfs_node(state: ExtractionState) -> Dict:
         "failure_reasons": []
     }
     
-    for i, paper in enumerate(screened_papers, 1):
+
+    def _fetch_single_paper(paper_info):
+        i, paper = paper_info
         safe_print(f"\n[{i}/{len(screened_papers)}] {paper.get('title', 'Untitled')[:60]}...")
         
         pdf_bytes = None
@@ -435,7 +438,6 @@ def fetch_pdfs_node(state: ExtractionState) -> Dict:
             pdf_bytes = fetch_pdf_from_arxiv(arxiv_id)
             if pdf_bytes:
                 source = "arxiv_direct"
-                fetch_stats["arxiv_direct"] += 1
         
         # Strategy 2: Try OpenAccess URL
         if not pdf_bytes:
@@ -443,7 +445,6 @@ def fetch_pdfs_node(state: ExtractionState) -> Dict:
             pdf_bytes = fetch_pdf_from_open_access(open_access_info)
             if pdf_bytes:
                 source = "open_access"
-                fetch_stats["open_access"] += 1
             elif open_access_info and open_access_info.get("url"):
                 failure_reason = "OpenAccess URL invalid or not a PDF"
         
@@ -452,27 +453,45 @@ def fetch_pdfs_node(state: ExtractionState) -> Dict:
             pdf_bytes = search_arxiv_for_pdf(paper.get("title"))
             if pdf_bytes:
                 source = "arxiv_search"
-                fetch_stats["arxiv_search"] += 1
             else:
                 failure_reason = failure_reason or "No arXiv match found by title"
         
         if pdf_bytes:
-            papers_with_pdfs.append({
-                **paper,
-                "pdf_bytes": pdf_bytes,
-                "pdf_source": source
-            })
             print(f"  [OK] PDF fetched from {source} ({len(pdf_bytes)/1024:.1f} KB)")
+            return {
+                "success": True,
+                "source": source,
+                "paper": {
+                    **paper,
+                    "pdf_bytes": pdf_bytes,
+                    "pdf_source": source
+                }
+            }
+        else:
+            print(f"  [FAIL] PDF not available - {failure_reason or 'Unknown reason'}")
+            return {
+                "success": False,
+                "title": paper.get("title", "")[:60],
+                "reason": failure_reason or "Unknown"
+            }
+
+    # Use ThreadPoolExecutor for concurrent fetching
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        indexed_papers = list(enumerate(screened_papers, 1))
+        # Map ensures results are in the same relative order
+        results = list(executor.map(_fetch_single_paper, indexed_papers))
+        
+    for res in results:
+        if res["success"]:
+            papers_with_pdfs.append(res["paper"])
+            fetch_stats[res["source"]] += 1
         else:
             fetch_stats["failed"] += 1
             fetch_stats["failure_reasons"].append({
-                "title": paper.get("title", "")[:60],
-                "reason": failure_reason or "Unknown"
+                "title": res["title"],
+                "reason": res["reason"]
             })
-            print(f"  [FAIL] PDF not available - {failure_reason or 'Unknown reason'}")
-        
-        # Rate limiting: arXiv recommends 3 seconds between requests
-        time.sleep(3.0)
+
     
     print(f"\n{'='*80}")
     print(f"PDF Fetch Summary:")
@@ -517,14 +536,15 @@ def extract_text_node(state: ExtractionState) -> Dict:
     
     total_length = 0
     
-    for i, paper in enumerate(papers_with_pdfs, 1):
+
+    def _extract_single_paper(paper_info):
+        i, paper = paper_info
         safe_print(f"\n[{i}/{len(papers_with_pdfs)}] Extracting: {paper.get('title', 'Untitled')[:60]}...")
         
         pdf_bytes = paper.get("pdf_bytes")
         
         if not pdf_bytes:
-            extraction_stats["failed_extractions"] += 1
-            continue
+            return {"success": False}
         
         sections = extract_text_from_pdf(pdf_bytes)
         
@@ -532,23 +552,36 @@ def extract_text_node(state: ExtractionState) -> Dict:
             # Don't include pdf_bytes in output (too large)
             paper_data = {k: v for k, v in paper.items() if k != "pdf_bytes"}
             
-            papers_with_text.append({
-                **paper_data,
-                "extracted_text": sections
-            })
-            
-            extraction_stats["successful_extractions"] += 1
-            total_length += len(sections["full_text"])
-            
             print(f"  [OK] Extracted {len(sections['full_text'])} chars")
             print(f"    - Title: {'[OK]' if sections['title'] else '[FAIL]'}")
             print(f"    - Introduction: {'[OK]' if sections['introduction'] else '[FAIL]'}")
             print(f"    - Methods: {'[OK]' if sections['methods'] else '[FAIL]'}")
             print(f"    - Results: {'[OK]' if sections['results'] else '[FAIL]'}")
             print(f"    - Conclusion: {'[OK]' if sections['conclusion'] else '[FAIL]'}")
+            
+            return {
+                "success": True,
+                "length": len(sections["full_text"]),
+                "paper": {
+                    **paper_data,
+                    "extracted_text": sections
+                }
+            }
+        else:
+            print(f"  [FAIL] Extraction failed or text too short")
+            return {"success": False}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(32, (os.cpu_count() or 1) + 4)) as executor:
+        indexed_pdfs = list(enumerate(papers_with_pdfs, 1))
+        results = list(executor.map(_extract_single_paper, indexed_pdfs))
+        
+    for res in results:
+        if res["success"]:
+            papers_with_text.append(res["paper"])
+            extraction_stats["successful_extractions"] += 1
+            total_length += res["length"]
         else:
             extraction_stats["failed_extractions"] += 1
-            print(f"  [FAIL] Extraction failed or text too short")
     
     if extraction_stats["successful_extractions"] > 0:
         extraction_stats["avg_text_length"] = total_length / extraction_stats["successful_extractions"]
