@@ -63,8 +63,18 @@ def fetch_pdf_from_arxiv(arxiv_id: str) -> Optional[bytes]:
         headers = {'User-Agent': 'LitScoutResearchBot/1.0'}
         
         print(f"  Fetching arXiv PDF: {arxiv_id}")
-        response = requests.get(pdf_url, headers=headers, timeout=45)
-        response.raise_for_status()
+        max_retries = 3
+        for attempt in range(max_retries):
+            response = requests.get(pdf_url, headers=headers, timeout=45)
+            if response.status_code == 429:
+                sleep_time = (attempt + 1) * 3
+                print(f"  [RATE LIMIT] arXiv PDF 429. Retrying in {sleep_time}s...")
+                time.sleep(sleep_time)
+                continue
+            response.raise_for_status()
+            break
+        else:
+            return None
         
         return response.content
         
@@ -120,8 +130,19 @@ def search_arxiv_for_pdf(title: str) -> Optional[bytes]:
         
         api_url = f"http://export.arxiv.org/api/query?search_query={encoded_title}&start=0&max_results=3"
         
-        response = requests.get(api_url, timeout=10)
-        response.raise_for_status()
+        max_retries = 3
+        for attempt in range(max_retries):
+            response = requests.get(api_url, timeout=10)
+            if response.status_code == 429:
+                sleep_time = (attempt + 1) * 3
+                print(f"  [RATE LIMIT] arXiv API 429. Retrying in {sleep_time}s...")
+                time.sleep(sleep_time)
+                continue
+            response.raise_for_status()
+            break
+        else:
+            print("  [FAIL] Max retries reached for arXiv API (429)")
+            return None
         
         # Parse Atom XML
         root = ET.fromstring(response.content)
@@ -450,8 +471,8 @@ def fetch_pdfs_node(state: ExtractionState) -> Dict:
             })
             print(f"  [FAIL] PDF not available - {failure_reason or 'Unknown reason'}")
         
-        # Rate limiting
-        time.sleep(0.5)
+        # Rate limiting: arXiv recommends 3 seconds between requests
+        time.sleep(3.0)
     
     print(f"\n{'='*80}")
     print(f"PDF Fetch Summary:")
