@@ -205,7 +205,7 @@ Research Questions:
 
 Write a 2–3 paragraph synthesis section for EACH of the following themes.
 Each section must:
-1. Synthesize the evidence from the supporting papers (use the citation keys provided in brackets, e.g., [Smith et al., 2023])
+1. Synthesize the evidence from the supporting papers. YOU MUST use the EXACT citation keys provided in brackets, e.g., [Smith et al., 2023]. Do not use parentheses or omit brackets.
 2. Highlight agreements, contradictions, or gaps across the papers
 3. Use formal academic prose appropriate for a journal literature review
 4. Stay focused on the theme — do NOT introduce unrelated content
@@ -219,6 +219,7 @@ CRITICAL:
 - Output MUST be valid JSON only.
 - Do NOT include markdown formatting inside section_text (no **, no #, etc.)
 - Do NOT add explanatory text outside the JSON.
+- EVERY single citation MUST be enclosed in square brackets exactly as provided in the context, e.g. [Smith et al., 2023]. Do NOT use parentheses like (Smith, 2023) or plain text citations. This is REQUIRED for quality assurance checks.
 
 {parser.get_format_instructions()}
 """
@@ -278,9 +279,9 @@ Style: {synthesis_style.replace("_", " ").title()}
 
 You have been provided with individual theme sections (written earlier). Your task is to:
 1. Write a 2–3 sentence INTRODUCTION paragraph that contextualises the review topic and states its scope
-2. Insert each theme section (do NOT rewrite them — copy them in order)  
+2. Insert each theme section (do NOT rewrite them — copy them exactly as provided in order to preserve the [Citation] brackets)  
 3. Write a 3–4 sentence CONCLUSION paragraph that summarises cross-cutting patterns, key tensions, and future research directions
-4. Do NOT add references section (citations are inline already)
+4. Do NOT add references section (citations are inline already) and ensure any new citations maintain the [Citation] format
 5. Use plain academic prose — no markdown formatting characters
 
 THEME SECTIONS (in order):

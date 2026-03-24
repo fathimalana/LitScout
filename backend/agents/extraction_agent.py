@@ -127,7 +127,16 @@ def search_arxiv_for_pdf(title: str) -> Optional[bytes]:
     try:
         # Clean title for query
         clean_title = re.sub(r'[^\w\s]', ' ', title).strip()
-        encoded_title = urllib.parse.quote(f"ti:{clean_title}")
+        words = [w for w in clean_title.split() if len(w) > 2]
+        if not words:
+            return None
+        
+        # Build query like: ti:word1 AND ti:word2 AND ti:word3
+        # Limit to 6 words to avoid overly restrictive queries or token limits
+        query = "+AND+".join(f"ti:{w}" for w in words[:8])
+        
+        # We don't need to quote the operators if we're directly injecting +AND+, but let's be safe
+        encoded_title = query
         
         api_url = f"http://export.arxiv.org/api/query?search_query={encoded_title}&start=0&max_results=3"
         

@@ -110,16 +110,7 @@ def plan_report_node(state: ReportState) -> Dict:
                 f"Write 2–3 formal academic paragraphs."
             )
         },
-        {
-            "title": "Key Themes and Findings",
-            "instructions": (
-                f"Write one focused paragraph per identified theme. "
-                f"Themes: {json.dumps(theme_names)}. "
-                f"For each, summarise the key findings and their significance. "
-                f"Base content on the synthesis draft provided to you. "
-                f"Maintain formal academic tone."
-            )
-        },
+
         {
             "title": "Quality Assessment",
             "instructions": (
@@ -233,6 +224,7 @@ def assemble_report_node(state: ReportState) -> Dict:
     section_drafts = state.get("section_drafts", [])
     user_prompt    = state.get("user_prompt", "")
     rqs            = state.get("research_questions", [])
+    synthesis_draft = state.get("synthesis_draft", "")
 
     if not section_drafts:
         fallback = (
@@ -259,6 +251,10 @@ def assemble_report_node(state: ReportState) -> Dict:
         title   = section.get("title", "Untitled Section")
         content = section.get("content", "").strip()
         body_parts.append(f"{title.upper()}\n{'-' * len(title)}\n{content}")
+        
+        # Inject the verbatim synthesis draft directly after methodology
+        if "methodology" in title.lower():
+            body_parts.append(f"KEY THEMES AND FINDINGS\n{'-' * 23}\n{synthesis_draft.strip()}")
 
     final_report = header + "\n\n".join(body_parts)
 
