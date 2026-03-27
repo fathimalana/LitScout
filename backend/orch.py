@@ -565,32 +565,41 @@ prompt_template = ChatPromptTemplate.from_template(PLANNER_PROMPT)
 planner_chain = prompt_template | llm | parser
 
 def planner_node(state: LitScoutState) -> Dict[str, Any]:
-    """Central planner node"""
+    """Central planner node with retry logic"""
     print("\n---ORCHESTRATOR: Planning---")
-    try:
-        response = planner_chain.invoke({
-            "user_prompt": state.user_prompt,
-            "current_step": state.current_step,
-            "research_questions_count": len(state.research_questions),
-            "raw_papers_count": len(state.raw_papers),
-            "filtered_papers_count": len(state.filtered_papers),
-            "screened_papers_count": len(state.screened_papers),
-            "themes_count": len(state.themes),
-            "has_synthesis": bool(state.synthesis_draft),
-            "quality_passed": state.quality_passed,
-            "workflow_complete": state.workflow_complete,
-            "observations": "\n   ".join(state.observations[-3:]) if state.observations else "Starting workflow",
-            "tool_descriptions": render_text_description(tools),
-            "format_instructions": parser.get_format_instructions()
-        })
+    
+    last_error = None
+    for attempt in range(3):  # up to 3 retries
+        try:
+            response = planner_chain.invoke({
+                "user_prompt": state.user_prompt,
+                "current_step": state.current_step,
+                "research_questions_count": len(state.research_questions),
+                "raw_papers_count": len(state.raw_papers),
+                "filtered_papers_count": len(state.filtered_papers),
+                "screened_papers_count": len(state.screened_papers),
+                "themes_count": len(state.themes),
+                "has_synthesis": bool(state.synthesis_draft),
+                "quality_passed": state.quality_passed,
+                "workflow_complete": state.workflow_complete,
+                "observations": "\n   ".join(state.observations[-3:]) if state.observations else "Starting workflow",
+                "tool_descriptions": render_text_description(tools),
+                "format_instructions": parser.get_format_instructions()
+            })
+            
+            print(f"Plan: {' -> '.join(response.plan[:3])}{'...' if len(response.plan) > 3 else ''}")
+            print(f"Next: {response.next_agent}")
+            return {"plan": response.plan, "next_agent": response.next_agent}
         
-        print(f"Plan: {' -> '.join(response.plan[:3])}{'...' if len(response.plan) > 3 else ''}")
-        print(f"Next: {response.next_agent}")
-        
-        return {"plan": response.plan, "next_agent": response.next_agent}
-    except Exception as e:
-        print(f"Planner error: {e}")
-        return {"plan": state.plan, "next_agent": "END", "error_messages": state.error_messages + [f"Planner error: {e}"]}
+        except Exception as e:
+            last_error = e
+            print(f"Planner error (attempt {attempt+1}/3): {e}")
+            if attempt < 2:
+                import time
+                time.sleep(5 * (attempt + 1))  # 5s, 10s backoff
+    
+    print(f"Planner failed after 3 attempts: {last_error}")
+    return {"plan": state.plan, "next_agent": "END", "error_messages": state.error_messages + [f"Planner failed: {last_error}"]}
 
 def tool_executor_node(state: LitScoutState) -> Dict[str, Any]:
     """Executes the selected agent"""
@@ -773,7 +782,7 @@ def format_stage_3_screening(state: dict):
                 "exclusion": f"{exclusion_rate:.1f}%",
                 "method": "LLM-based Semantic Filtering"
             },
-            "papers": output_papers[:15] 
+            "papers": output_papers[:50] 
         }
     }
 def format_stage_4_extraction(state: dict) -> dict:
@@ -801,14 +810,17 @@ def format_stage_4_extraction(state: dict) -> dict:
                 "iterations": len(results.get("iterations", [])),
                 "method": "Adaptive PyMuPDF Extraction"
             },
-            # We send a slice to the UI to avoid crashing the browser with huge text blocks
             "papers": [
                 {
                     "title": p.get("title"),
                     "authors": p.get("authors"),
-                    "text_preview": p.get("text", "")[:500] + "...", # Preview only
-                    "full_text_available": bool(p.get("text"))
-                } for p in papers[:10]
+                    # Prefer explicit url, fall back to Semantic Scholar paper page
+                    "url": p.get("url") or (
+                        f"https://www.semanticscholar.org/paper/{p['paperId']}"
+                        if p.get("paperId") else None
+                    ),
+                    "full_text_available": bool(p.get("extracted_text") or p.get("text"))
+                } for p in papers
             ]
         }
     }
@@ -883,7 +895,11 @@ def format_stage_7_qa(state: dict) -> dict:
                 "word_count":       qr.get("word_count", 0),
                 "passed":           passed,
                 "status":           qr.get("status", "unknown"),
-                "method":           qr.get("method", "LangGraph QA pipeline")
+                "method":           qr.get("method", "LangGraph QA pipeline"),
+                "confidence":       qr.get("confidence", None),
+                "disagreement":     qr.get("disagreement", None),
+                "strengths":        qr.get("strengths", []),
+                "weaknesses":       qr.get("weaknesses", [])
             },
             "covered_questions": qr.get("covered_questions", []),
             "missing_questions": qr.get("missing_questions", []),
@@ -930,7 +946,11 @@ async def run_orchestrator(user_prompt: str):
         # Increased recursion limit for deep research tasks
         async for step in app.astream(initial_state, {"recursion_limit": 50}):
             for node, output in step.items():
-                # yield {"type": "log", "message": f"✅ Agent '{node}' finished step."} 
+                # Stream agent name to terminal so user can see progress
+                if node == "planner" and isinstance(output, dict):
+                    next_a = str(output.get("next_agent", "") or "")
+                    if next_a and next_a != "END":
+                        yield {"type": "log", "message": f"▶ Running: {next_a.replace('_', ' ').title()}..."}
                 
                 if isinstance(output, dict):
                     accumulated_state.update(output)

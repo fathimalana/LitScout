@@ -142,12 +142,6 @@ const ScreeningView = ({ data }) => {
                                     {activePaper.authors && <span>✍️ {activePaper.authors.map(a => a.name).join(", ")}</span>}
                                 </div>
 
-                                <div className="bg-blue-50 border border-blue-100 rounded-lg p-4 mb-6">
-                                    <h4 className="text-[10px] text-blue-500 font-bold uppercase tracking-wider mb-2">🤖 AI Reasoning</h4>
-                                    <p className="text-sm text-blue-900 leading-relaxed">
-                                        {activePaper.reason || activePaper.abstract?.slice(0, 150) + "..." || "Paper selected based on relevance criteria."}
-                                    </p>
-                                </div>
 
                                 <div>
                                     <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-wider mb-2">Abstract</h4>

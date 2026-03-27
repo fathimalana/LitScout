@@ -22,7 +22,7 @@ llm = ChatGroq(
 
 MAX_CHARS_PER_PAPER   = 1500   # matches thematic agent
 THEME_BATCH_SIZE      = 3      # themes per LLM call (stay within rate limit)
-MAX_PAPERS_FOR_CONTEXT = 20    # how many papers to surface as supporting evidence
+MAX_PAPERS_FOR_CONTEXT = 40   # cover up to 40 extracted papers
 
 
 # -------------------------------------------------------------------
@@ -141,7 +141,7 @@ def prepare_context_node(state: SynthesisState) -> Dict:
 
         # Gather supporting paper snippets for this theme
         supporting = []
-        for cid in citations[:5]:
+        for cid in citations[:10]:
             snippet = paper_lookup.get(cid)
             if not snippet:
                 # Fuzzy fallback: search by title fragment
@@ -157,7 +157,7 @@ def prepare_context_node(state: SynthesisState) -> Dict:
             f"DESCRIPTION: {description}\n"
             f"KEY FINDINGS:\n" + "\n".join(f"  - {f}" for f in findings) + "\n"
             f"SUPPORTING PAPERS ({len(supporting)} of {len(citations)}):\n"
-            + "\n\n".join(supporting[:3])
+            + "\n\n".join(supporting[:5])
         )
         context_blocks.append(block)
 
