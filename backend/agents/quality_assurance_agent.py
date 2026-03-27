@@ -268,12 +268,14 @@ def finalize_qa_node(state: QAState) -> Dict:
 
     final_report = {
         **qr,
-        "coverage_score": coverage_result.get("coverage_score", 0),
-        "citation_count": citation_result.get("citation_count", 0),
-        "word_count": word_count,
-        "passed": passed,
-        "status": "passed" if passed else "needs_improvement",
-        "summary": f"Score {score}/10 | Disagreement {disagreement}"
+        "coverage_score":     coverage_result.get("coverage_score", 0),
+        "covered_questions":  coverage_result.get("covered_questions", []),
+        "missing_questions":  coverage_result.get("missing_questions", []),
+        "citation_count":     citation_result.get("citation_count", 0),
+        "word_count":         word_count,
+        "passed":             passed,
+        "status":             "passed" if passed else "needs_improvement",
+        "summary":            f"Score {score}/10 | Disagreement {disagreement}"
     }
 
     print(f"Final Score: {score} | Passed: {passed}")

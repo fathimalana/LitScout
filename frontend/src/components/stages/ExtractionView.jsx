@@ -57,20 +57,31 @@ const ExtractionView = ({ data }) => {
         </div>
       </div>
 
-      {/* Samples List */}
+      {/* Papers List */}
       {papers.length > 0 && (
         <div className="mt-4">
           <h4 className="text-xs font-bold text-gray-500 uppercase mb-3 flex items-center gap-2">
             <span className="w-2 h-2 bg-blue-600 rounded-full animate-pulse"></span>
-            Live Extraction Feed
+            Extracted Papers ({papers.length})
           </h4>
-          <div className="space-y-3 max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
+          <div className="space-y-3">
             {papers.map((paper, i) => (
-              <div key={i} className="p-4 bg-white border border-gray-100 rounded-lg shadow-sm hover:border-blue-200 transition-colors">
-                <p className="font-bold text-sm text-gray-800 mb-1 line-clamp-1">{paper.title}</p>
-                <div className="text-xs text-gray-600 bg-gray-50 p-3 rounded italic border-l-2 border-blue-400 font-mono">
-                  "{paper.text_preview?.substring(0, 200)}..."
-                </div>
+              <div key={i} className="p-4 bg-white border border-gray-100 rounded-lg shadow-sm hover:border-blue-200 transition-colors flex items-center justify-between gap-3">
+                <p className="font-bold text-sm text-gray-800 leading-snug flex-1">{paper.title || 'Untitled'}</p>
+                {paper.url ? (
+                  <a
+                    href={paper.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex-shrink-0 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-200 px-3 py-1.5 rounded-full hover:bg-blue-600 hover:text-white transition-colors whitespace-nowrap"
+                  >
+                    Open Paper ↗
+                  </a>
+                ) : (
+                  <span className="flex-shrink-0 text-xs text-gray-400 bg-gray-100 px-3 py-1.5 rounded-full whitespace-nowrap">
+                    No link
+                  </span>
+                )}
               </div>
             ))}
           </div>

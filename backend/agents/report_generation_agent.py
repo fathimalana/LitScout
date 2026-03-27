@@ -131,9 +131,10 @@ def plan_report_node(state: ReportState) -> Dict:
         {
             "title": "References",
             "instructions": (
-                "Extract all inline citations of the form [paper_id] from the synthesis draft "
-                "and format them as a numbered reference list. "
-                "For each, list only the paper ID as the reference entry. "
+                "Extract ALL inline citations of the form [Author, Year] or [paperId] from the COMPLETE synthesis draft below. "
+                "Format them as a numbered reference list — one entry per unique citation. "
+                "List every citation found — do not skip any. "
+                f"Synthesis text to scan:\n{state.get('synthesis_draft', '')[:6000]}\n"
                 "If no citations found, write 'No formal references were automatically extracted.'"
             )
         }
@@ -181,7 +182,7 @@ Research Questions:
 {rq_text}
 
 Synthesis Draft (for reference):
-{synthesis[:3000]}
+{synthesis[:8000]}
 
 Write EXACTLY {len(batch)} section(s) as specified below. Follow the instructions precisely.
 

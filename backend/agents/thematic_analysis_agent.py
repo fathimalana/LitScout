@@ -20,9 +20,9 @@ llm = ChatGroq(
     temperature=0
 )
 
-MAX_PAPERS_PER_BATCH = 3
+MAX_PAPERS_PER_BATCH = 8
 MAX_CHARS_PER_PAPER = 1500
-MIN_SUPPORT_PER_THEME = 3
+MIN_SUPPORT_PER_THEME = 2
 
 
 # -------------------------------------------------------------------
@@ -124,7 +124,10 @@ def identify_themes_node(state: ThematicAnalysisState) -> Dict:
     print("THEMATIC STAGE 2: IDENTIFYING THEMES")
     print("=" * 60)
 
-    papers = state["aggregated_text"][:MAX_PAPERS_PER_BATCH]
+    # Sample evenly across all papers so themes represent the whole corpus
+    total = len(state["aggregated_text"])
+    step = max(1, total // MAX_PAPERS_PER_BATCH)
+    papers = state["aggregated_text"][::step][:MAX_PAPERS_PER_BATCH]
     rq = state["research_questions"]
 
     text_blob = "\n---\n".join(
